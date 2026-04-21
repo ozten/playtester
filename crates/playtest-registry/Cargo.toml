@@ -16,6 +16,7 @@ playtest-adapters.workspace = true
 playtest-agents.workspace = true
 playtest-log.workspace = true
 playtest-cribbage.workspace = true
+playtest-shipwreck.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }

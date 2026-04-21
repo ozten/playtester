@@ -32,18 +32,19 @@
 //!   engine applies the `EndGame` event on the *next* loop iteration
 //!   after `game_over` reports `Some`.
 
-use playtest_core::{Actor, EndReason, Game, GameError, GameResult, PlayerId};
+use playtest_core::{Actor, Game, GameError, GameResult, PlayerId};
 use playtest_ports::Rng;
 
 use crate::action::{Action, EventCardKind, EventResolution, EventTarget};
 use crate::card::{Card, EventCard, PlayerCardId};
 use crate::config::ShipWreckConfig;
-use crate::event::{Event, EventOutcome, PlayerScore};
+use crate::event::{Event, EventOutcome};
 use crate::events::{flying_fish, shark, typhoon};
 use crate::phase::Phase;
 use crate::public_view::{ShipWreckPublicView, public_view as build_public_view};
 use crate::raft::SlotId;
 use crate::resource::{Resource, ResourceCost};
+use crate::scoring::build_game_result as build_game_result_impl;
 use crate::setup::build_initial_state;
 use crate::state::{GameState, PendingEvent, PlacedPlayerCard};
 use crate::turns::{
@@ -303,30 +304,77 @@ fn apply_play_action(
         });
     }
 
-    match action {
+    let mut events = match action {
         Action::ExtendRaft { insert_after } => {
-            apply_extend_raft(state, player, *insert_after)
+            apply_extend_raft(state, player, *insert_after)?
         }
         Action::PlacePlayerCard { card, slot } => {
-            apply_place_player_card(state, player, *card, *slot)
+            apply_place_player_card(state, player, *card, *slot)?
         }
         Action::PickWreckage {
             from_pool,
             card_index,
-        } => apply_pick_wreckage(state, player, *from_pool, *card_index),
+        } => apply_pick_wreckage(state, player, *from_pool, *card_index)?,
         Action::BuildEquipment {
             equipment_kind,
             slot,
-        } => apply_build_equipment(state, player, *equipment_kind, *slot),
-        Action::EndTurn => Ok(apply_end_turn(state, player)),
+        } => apply_build_equipment(state, player, *equipment_kind, *slot)?,
+        Action::EndTurn => apply_end_turn(state, player),
         Action::PlayEventCard { card, target } => {
-            apply_play_event_card(state, player, *card, *target)
+            apply_play_event_card(state, player, *card, *target)?
         }
-        Action::ResolveEvent(_) => Err(GameError::IllegalAction {
-            player,
-            message: "ResolveEvent is only legal during Phase::ResolvingEvent".into(),
-        }),
+        Action::ResolveEvent(_) => {
+            return Err(GameError::IllegalAction {
+                player,
+                message: "ResolveEvent is only legal during Phase::ResolvingEvent".into(),
+            });
+        }
+    };
+
+    // If the action's events don't already include an `EndGame`, check
+    // whether the post-application state will be game-over and, if so,
+    // append one. The game loop exits on the next iteration via
+    // `game_over`, so this is our only chance to emit `EndGame` on the
+    // log — without it, metric extractors lose the final scores,
+    // tie-breaker, and winner raft/invention counts.
+    if !events.iter().any(|e| matches!(e, Event::EndGame { .. })) {
+        let mut hypothetical = state.clone();
+        for e in &events {
+            apply_event_impl(&mut hypothetical, e);
+        }
+        if let Some(end) = synthesize_end_game(&hypothetical) {
+            events.push(end);
+        }
     }
+
+    Ok(events)
+}
+
+/// If `state` is a terminal ShipWreck state (all pools empty, deck
+/// empty, no pending events, phase still `Play`), build the
+/// corresponding `Event::EndGame`; otherwise `None`. This is the
+/// "belt-and-suspenders" check that keeps the log self-describing
+/// even when the game ends on a non-EndTurn action.
+fn synthesize_end_game(state: &GameState) -> Option<Event> {
+    if state.phase != Phase::Play {
+        return None;
+    }
+    if !state.event_resolution_stack.is_empty() {
+        return None;
+    }
+    if !state.wreckage_deck.is_empty() {
+        return None;
+    }
+    if state.face_up_pools.iter().any(|p| !p.is_empty()) {
+        return None;
+    }
+    let (result, tie_breaker, scores) = build_game_result_impl(state);
+    Some(Event::EndGame {
+        winner: result.winner,
+        reason: result.reason,
+        final_scores: scores,
+        tie_breaker,
+    })
 }
 
 fn apply_resolution_action(
@@ -352,16 +400,33 @@ fn apply_resolution_action(
             message: format!("not your turn to resolve — waiting on {front}"),
         });
     }
-    match action {
+    let mut events = match action {
         Action::ResolveEvent(resolution) => {
-            apply_resolve_event(state, player, *resolution)
+            apply_resolve_event(state, player, *resolution)?
         }
-        _ => Err(GameError::IllegalAction {
-            player,
-            message: "only ResolveEvent actions are legal during event resolution"
-                .into(),
-        }),
+        _ => {
+            return Err(GameError::IllegalAction {
+                player,
+                message: "only ResolveEvent actions are legal during event resolution"
+                    .into(),
+            });
+        }
+    };
+
+    // Mirror the end-game synthesis in `apply_play_action` — after the
+    // resolution queue drains, the state might flip back to Play with
+    // empty pools, which is terminal.
+    if !events.iter().any(|e| matches!(e, Event::EndGame { .. })) {
+        let mut hypothetical = state.clone();
+        for e in &events {
+            apply_event_impl(&mut hypothetical, e);
+        }
+        if let Some(end) = synthesize_end_game(&hypothetical) {
+            events.push(end);
+        }
     }
+
+    Ok(events)
 }
 
 fn apply_play_event_card(
@@ -774,12 +839,12 @@ fn apply_end_turn(state: &GameState, player: PlayerId) -> Vec<Event> {
     let face_up_empty = state.face_up_pools.iter().all(Vec::is_empty);
     let no_pending = state.event_resolution_stack.is_empty();
     if deck_empty && face_up_empty && no_pending {
-        let scores = compute_scores(state);
-        let (winner, reason) = winner_from_scores(&scores);
+        let (result, tie_breaker, scores) = build_game_result_impl(state);
         events.push(Event::EndGame {
-            winner,
-            reason,
+            winner: result.winner,
+            reason: result.reason,
             final_scores: scores,
+            tie_breaker,
         });
     }
 
@@ -933,6 +998,7 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
             winner: _,
             reason: _,
             final_scores: _,
+            tie_breaker: _,
         } => {
             state.phase = Phase::Finished;
         }
@@ -961,69 +1027,11 @@ fn apply_picked_into_hand_or_inventory(
 
 // ---------- scoring ------------------------------------------------------
 
-fn compute_scores(state: &GameState) -> Vec<PlayerScore> {
-    let n = state.players.len();
-    let mut scores = Vec::with_capacity(n);
-    for (i, p) in state.players.iter().enumerate() {
-        let rescue_points: u32 = p
-            .played_players
-            .iter()
-            .map(|pp| u32::from(pp.card.rescue_points))
-            .sum();
-        let raft_length = u16::try_from(p.raft.length())
-            .expect("raft length fits in u16");
-        let invention_count = u16::try_from(p.raft.invention_count())
-            .expect("invention count fits in u16");
-        scores.push(PlayerScore {
-            player: u8::try_from(i).expect("seat < 4 fits in u8"),
-            rescue_points: u16::try_from(rescue_points).unwrap_or(u16::MAX),
-            raft_length,
-            invention_count,
-        });
-    }
-    scores
-}
-
-/// Pick a winner from `scores` with spec tie-breakers: rescue points
-/// desc, then raft_length desc, then invention_count desc, then draw.
-fn winner_from_scores(scores: &[PlayerScore]) -> (Option<PlayerId>, EndReason) {
-    if scores.is_empty() {
-        return (None, EndReason::Draw);
-    }
-    // Sort by descending (rescue_points, raft_length, invention_count).
-    let mut ranked: Vec<&PlayerScore> = scores.iter().collect();
-    ranked.sort_by(|a, b| {
-        b.rescue_points
-            .cmp(&a.rescue_points)
-            .then(b.raft_length.cmp(&a.raft_length))
-            .then(b.invention_count.cmp(&a.invention_count))
-    });
-    let top = ranked[0];
-    if ranked.len() >= 2 {
-        let second = ranked[1];
-        if top.rescue_points == second.rescue_points
-            && top.raft_length == second.raft_length
-            && top.invention_count == second.invention_count
-        {
-            return (None, EndReason::Draw);
-        }
-    }
-    (Some(top.player), EndReason::Other("deck_exhausted".into()))
-}
-
 /// Build the GameResult from state scores — used by `game_over`.
+/// Thin wrapper over [`crate::scoring::build_game_result`] that drops
+/// the tie-breaker and score rows the caller doesn't need.
 fn build_game_result(state: &GameState) -> GameResult {
-    let scores = compute_scores(state);
-    let (winner, reason) = winner_from_scores(&scores);
-    let score_vec: Vec<i32> = scores
-        .iter()
-        .map(|s| i32::from(s.rescue_points))
-        .collect();
-    GameResult {
-        winner,
-        reason,
-        scores: score_vec,
-    }
+    build_game_result_impl(state).0
 }
 
 // ---------- misc helpers -------------------------------------------------

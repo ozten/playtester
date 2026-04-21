@@ -8,22 +8,40 @@
 //! run game-typed generic code. Adding a new game means:
 //!
 //! 1. Add a variant to [`RegisteredGame`].
-//! 2. Wire it into [`lookup`] and [`KNOWN_GAMES`].
+//! 2. Wire it into [`lookup`], [`KNOWN_GAMES`], and [`player_count_range`].
 //! 3. Add a matching arm in `commands::play` and `commands::replay`.
 
 use anyhow::{Result, bail};
 use playtest_cribbage::CribbageGame;
+use playtest_shipwreck::ShipWreckGame;
 
 /// All games the CLI knows how to run. The variant name is the
 /// user-visible string passed on the command line.
 #[derive(Debug)]
 pub enum RegisteredGame {
     Cribbage(CribbageGame),
+    ShipWreck(ShipWreckGame),
 }
 
 /// The names accepted by [`lookup`], in display order. Kept as a
 /// constant so the unknown-game error can list them accurately.
-pub const KNOWN_GAMES: &[&str] = &["cribbage"];
+pub const KNOWN_GAMES: &[&str] = &["cribbage", "shipwreck"];
+
+/// Inclusive range of legal agent counts for each registered game.
+/// Lets the CLI validate `--agents` against per-game rules rather
+/// than hardcoding "exactly 2" (which is wrong for ShipWreck's 2..=4
+/// player range).
+#[must_use]
+pub fn player_count_range(game: &RegisteredGame) -> (usize, usize) {
+    match game {
+        // Cribbage is strictly 2-player per the Phase 0 scope decision.
+        RegisteredGame::Cribbage(_) => (2, 2),
+        RegisteredGame::ShipWreck(_) => (
+            usize::from(playtest_shipwreck::MIN_PLAYERS),
+            usize::from(playtest_shipwreck::MAX_PLAYERS),
+        ),
+    }
+}
 
 /// Look up a game by name.
 ///
@@ -33,6 +51,7 @@ pub const KNOWN_GAMES: &[&str] = &["cribbage"];
 pub fn lookup(name: &str) -> Result<RegisteredGame> {
     match name {
         "cribbage" => Ok(RegisteredGame::Cribbage(CribbageGame::new())),
+        "shipwreck" => Ok(RegisteredGame::ShipWreck(ShipWreckGame::new())),
         other => bail!("unknown game: {other}; known: {}", KNOWN_GAMES.join(", ")),
     }
 }
@@ -48,10 +67,23 @@ mod tests {
     }
 
     #[test]
+    fn shipwreck_lookup_succeeds() {
+        let g = lookup("shipwreck").unwrap();
+        assert!(matches!(g, RegisteredGame::ShipWreck(_)));
+    }
+
+    #[test]
     fn unknown_name_errors_with_known_list() {
         let err = lookup("jalopnik").unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("unknown game"), "msg: {msg}");
         assert!(msg.contains("cribbage"), "msg should list cribbage: {msg}");
+        assert!(msg.contains("shipwreck"), "msg should list shipwreck: {msg}");
+    }
+
+    #[test]
+    fn player_count_ranges_cover_each_game() {
+        assert_eq!(player_count_range(&lookup("cribbage").unwrap()), (2, 2));
+        assert_eq!(player_count_range(&lookup("shipwreck").unwrap()), (2, 4));
     }
 }

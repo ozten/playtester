@@ -4,12 +4,16 @@ A deterministic Rust CLI for playtesting card and board games with agent-driven 
 
 ## Status
 
-Phase 0 (engine foundations) is nearly complete — Units 1–10 of the [phases-0-1 plan](docs/plans/2026-04-21-001-feat-playtester-phases-0-1-plan.md) have shipped. Cribbage plays end-to-end as a Random-vs-Random simulation; logs can be replayed deterministically.
-
-- **Shipped:** workspace scaffold, port traits, four-variant adapters (stub/production/record/playback), `Game` trait + `GameLoop`, `Agent` trait + `RandomAgent`/`ScriptedAgent`, JSONL event log with replay, full Cribbage rules, CLI with `play` and `replay`.
-- **Next:** Unit 11 (Phase 0 soak test + determinism audit), then Phase 1 (SQLite ingestion + report subcommand).
+Phase 0 + Phase 1 are complete — Cribbage plays end-to-end as a Random-vs-Random simulation, logs replay deterministically, and a SQLite-backed metrics ingestion + markdown report pipeline runs at 10K-game scale. Phase 2 is in flight: ShipWreck (a second, harder game: no scoring track, multi-player, event cards) has shipped through Unit 24 — full rules, event-card resolution, metrics registry, CLI integration, and a 10K-game soak test.
 
 See [`playtest-roadmap.md`](playtest-roadmap.md) for the full roadmap and [`docs/plans/`](docs/plans/) for active implementation plans.
+
+## Games
+
+| Game | Players | Status | Notes |
+|------|---------|--------|-------|
+| [Cribbage](crates/games/cribbage/) | 2 | Shipped | 121-point standard rules. Full show/crib/pegging/nobs/nibs scoring. |
+| [ShipWreck](crates/games/shipwreck/) | 2–4 | Shipped (Phase 2, Unit 24) | Custom rescue-points card game with raft extensions, equipment upgrades, and event cards (Shark / Typhoon / FlyingFish). See [`docs/shipwreck.md`](docs/shipwreck.md). |
 
 ## Build
 
@@ -34,6 +38,20 @@ cargo run --release -p playtest-cli -- \
     --games 10 \
     --seed 42 \
     --out games/
+```
+
+**Run 10 games of ShipWreck (2–4 players):**
+
+```bash
+# 2-player:
+cargo run --release -p playtest-cli -- \
+  play --game shipwreck --agents random,random \
+       --games 10 --seed 42 --out games/
+
+# 4-player:
+cargo run --release -p playtest-cli -- \
+  play --game shipwreck --agents random,random,random,random \
+       --games 10 --seed 42 --out games/
 ```
 
 You'll get `games/game-0000.jsonl` through `games/game-0009.jsonl`. Each file is one complete game: a header line, one line per event (deal, discard, cut, peg, show-score, end-game), and a final-result line.
@@ -77,3 +95,6 @@ Add `--tick N` to dump just the state after the Nth event (useful for bisecting)
 | `playtest-metrics` | SQLite schema, ingestion, `MetricRegistry`, reporter *(Phase 1)* |
 | `playtest-cli` | `playtest` binary: `play`, `replay` (`report` arrives in Phase 1) |
 | `crates/games/cribbage` | First game — 2-player standard Cribbage, 121 points |
+| `crates/games/shipwreck` | Second game — 2–4 player rescue-points card game with event cards |
+| `playtest-registry` | Game + agent lookup tables shared by the CLI and server |
+| `playtest-server` | HTTP server for the web spine (Phase 2) |

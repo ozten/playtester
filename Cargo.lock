@@ -1060,6 +1060,7 @@ dependencies = [
  "playtest-ports",
  "playtest-registry",
  "playtest-server",
+ "playtest-shipwreck",
  "predicates",
  "rayon",
  "rusqlite",
@@ -1150,6 +1151,7 @@ dependencies = [
  "playtest-cribbage",
  "playtest-log",
  "playtest-ports",
+ "playtest-shipwreck",
  "serde_json",
  "tokio",
 ]
@@ -1186,12 +1188,16 @@ dependencies = [
  "playtest-adapters",
  "playtest-agents",
  "playtest-core",
+ "playtest-log",
+ "playtest-metrics",
  "playtest-ports",
  "rand_chacha",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -21,12 +21,15 @@ pub mod config;
 pub mod determinize;
 pub mod event;
 pub(crate) mod events;
+pub mod metrics;
 pub mod phase;
 pub mod pool;
 pub mod public_view;
 pub mod raft;
+pub mod report;
 pub mod resource;
 pub mod rules;
+pub mod scoring;
 pub mod state;
 pub mod turns;
 
@@ -39,7 +42,7 @@ pub use card::{
     PlayerCardId, PlayerSkill, RaftExtensionCard,
 };
 pub use config::{ConfigError, MAX_PLAYERS, MIN_PLAYERS, ShipWreckConfig};
-pub use event::{Event, EventOutcome, PlayerScore};
+pub use event::{Event, EventOutcome, PlayerScore, TieBreakerUsed};
 pub use phase::Phase;
 pub use pool::{
     DEFAULT_FLYING_FISH_COUNT, DEFAULT_SHARK_COUNT, DEFAULT_TYPHOON_COUNT, ITEM_COUNT_PER_RESOURCE,
@@ -48,5 +51,6 @@ pub use pool::{
 pub use public_view::{ShipWreckPublicView, public_view};
 pub use raft::{Raft, RaftError, SlotId};
 pub use resource::{InsufficientResources, Resource, ResourceCost};
+pub use metrics::ShipWreckMetrics;
 pub use rules::ShipWreckGame;
 pub use state::{GameState, PendingEvent, PendingEventKind, PlacedPlayerCard, PlayerState};

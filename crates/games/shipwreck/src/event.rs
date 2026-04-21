@@ -20,6 +20,30 @@ use crate::card::{Card, EquipmentKind, PlayerCardId};
 use crate::raft::SlotId;
 use crate::resource::Resource;
 
+/// Which tie-breaker step (if any) actually decided the game.
+///
+/// Per `docs/shipwreck.md`, rescue points are the primary score; ties
+/// on rescue points are broken first by raft length, then by invention
+/// count, then declared a tie. The engine records the first tie-breaker
+/// that produced a unique winner so metrics can see *why* a game ended
+/// the way it did — "was the winner decided on rescue points, or did
+/// they only win because of their longer raft?"
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TieBreakerUsed {
+    /// Rescue points alone selected a unique winner — no tie-breaker
+    /// was consulted.
+    None,
+    /// Rescue points tied; raft length produced the winner.
+    RaftLength,
+    /// Rescue points *and* raft length tied; invention count produced
+    /// the winner.
+    InventionCount,
+    /// Every tie-breaker ran out: rescue points, raft length, and
+    /// invention count are all equal at the top. `winner` is `None`.
+    Tie,
+}
+
 /// Outcome of resolving an in-game event card. Each enum variant names
 /// the mechanical result so metrics can count "how many sharks were
 /// defended" vs. "how many landed" without re-running the rule logic.
@@ -156,9 +180,26 @@ pub enum Event {
     EndTurn { player: PlayerId },
 
     /// The game ended. No further events follow this one.
+    ///
+    /// `tie_breaker` records which step in the rescue-points → raft
+    /// length → invention count chain produced the winner (or declared
+    /// a tie). It's redundant with `winner` + `final_scores` — a reader
+    /// could recompute it — but putting it on the log means replay
+    /// tools, metric extractors, and reports all read the same truth
+    /// and don't have to agree on the tie-breaker algorithm independently.
     EndGame {
         winner: Option<PlayerId>,
         reason: EndReason,
         final_scores: Vec<PlayerScore>,
+        #[serde(default = "default_tie_breaker_used")]
+        tie_breaker: TieBreakerUsed,
     },
+}
+
+/// Older logs (pre-Unit-24) lacked the `tie_breaker` field. When
+/// deserializing those logs we default to `TieBreakerUsed::None` — the
+/// safest fallback, since old logs aren't useful for tie-breaker
+/// analysis anyway.
+fn default_tie_breaker_used() -> TieBreakerUsed {
+    TieBreakerUsed::None
 }

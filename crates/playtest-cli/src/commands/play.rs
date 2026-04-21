@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use clap::Args as ClapArgs;
 use playtest_adapters::{ProductionFileSystem, ProductionGameEventSink};
-use playtest_registry::game_registry::{RegisteredGame, lookup as lookup_game};
+use playtest_registry::game_registry::{
+    RegisteredGame, lookup as lookup_game, player_count_range,
+};
 use playtest_registry::play::run_single_game_into_sink;
 
 /// CLI flags for the `play` subcommand.
@@ -53,9 +55,14 @@ pub fn run(args: &PlayArgs) -> Result<()> {
     let game = lookup_game(&args.game)?;
     let agent_names: Vec<String> = args.agents.split(',').map(str::to_owned).collect();
 
-    if agent_names.len() != 2 {
+    // Each game declares its player-count range; the CLI validates
+    // against that rather than hardcoding a fixed count. Cribbage is
+    // still 2..=2; ShipWreck is 2..=4.
+    let (min, max) = player_count_range(&game);
+    if agent_names.len() < min || agent_names.len() > max {
         bail!(
-            "expected 2 agents (2-player only for Phase 0), got {}: `{}`",
+            "game `{}` expects {min}..={max} agents, got {}: `{}`",
+            args.game,
             agent_names.len(),
             args.agents
         );

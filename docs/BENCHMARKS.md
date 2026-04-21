@@ -1,4 +1,4 @@
-# Phase 0 + 1 benchmarks
+# Phase 0 + 1 + 2 benchmarks
 
 The exit criteria from `playtest-roadmap.md` tracked here:
 
@@ -7,6 +7,9 @@ The exit criteria from `playtest-roadmap.md` tracked here:
 - **R0.11** — Zero panics over a 100,000-game soak test.
 - **R1.5** — Per-card design-insight metrics surface on a fixed-deck game.
 - **R1.6** — `playtest report` over 10,000 games completes in under 30 seconds.
+- **R9.6** — ShipWreck: 10,000 random-vs-random games all terminate with a
+  valid `GameResult`, ≥95% via `EndReason::Other("deck_exhausted")`,
+  within a 120-second wall-clock budget.
 
 All pass with margin on the current main branch.
 
@@ -124,6 +127,36 @@ the end-to-end timing above is captured here rather than in a test
 because a 30 s budget tied to machine speed is brittle as an
 assertion.
 
+## R9.6 — ShipWreck 10K-game soak
+
+| Metric | Value |
+|---|---|
+| Budget (R9.6) | < 120.0 s |
+| **Measured** | **4.24 s** |
+| Throughput | ~2,370 games/sec |
+| Termination rate | 10,000 / 10,000 (100%) |
+| Valid `GameResult` | 10,000 / 10,000 (100%) |
+| `deck_exhausted` share | 9,996 / 10,000 (99.96%) |
+| `Draw` (true tie on all three keys) | 4 / 10,000 (0.04%) |
+| Panics | **0** |
+| Avg events per game | 354.3 |
+| Avg winner raft length | 20.22 (over 9,996 decided games) |
+
+ShipWreck is structurally different from Cribbage: there is no score
+track to cross, so the game always runs until the wreckage pools are
+empty. The 99.96% `deck_exhausted` share is the healthy signal — the
+rare `Draw` cases are true 3-way-equal outcomes on rescue points +
+raft length + invention count, which the random agents occasionally
+produce by accident.
+
+Reproduce:
+
+```bash
+cargo test --release -p playtest-shipwreck --test soak_10k -- --ignored --nocapture
+```
+
+Source: `crates/games/shipwreck/tests/soak_10k.rs`.
+
 ## Determinism audit
 
 The determinism guardrail runs in every PR's normal `cargo test` — not
@@ -151,8 +184,9 @@ cargo test --workspace
 cargo test -p playtest-core --test determinism_audit
 
 # Soak suite (nightly, not per-PR)
-cargo test --release -p playtest-cli --test soak_10k   -- --ignored --nocapture
-cargo test --release -p playtest-cli --test soak_100k  -- --ignored --nocapture
+cargo test --release -p playtest-cli        --test soak_10k   -- --ignored --nocapture
+cargo test --release -p playtest-cli        --test soak_100k  -- --ignored --nocapture
+cargo test --release -p playtest-shipwreck  --test soak_10k   -- --ignored --nocapture
 ```
 
 ## CI

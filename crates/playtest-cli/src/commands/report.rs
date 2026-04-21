@@ -10,8 +10,7 @@
 //! The command dispatches on `--game` the same way `play` and
 //! `replay` do — see [`playtest_registry::game_registry`]. Generic
 //! sections (Summary, Per-agent) come from `playtest_metrics::reporter`;
-//! game-specific sections come from the game crate (e.g.
-//! `playtest_cribbage::report`).
+//! game-specific sections come from the game crate.
 
 use std::path::{Path, PathBuf};
 
@@ -22,6 +21,7 @@ use playtest_metrics::{
     MarkdownBuilder, ingest_directory, init_schema, write_per_agent_section, write_summary_section,
 };
 use playtest_registry::game_registry::{RegisteredGame, lookup as lookup_game};
+use playtest_shipwreck::{ShipWreckGame, ShipWreckMetrics};
 use rusqlite::Connection;
 
 /// CLI flags for the `report` subcommand.
@@ -65,6 +65,13 @@ pub fn run(args: &ReportArgs) -> Result<()> {
             &args.games,
             CribbageGame::NAME,
             &CribbageMetrics,
+        )
+        .with_context(|| format!("ingesting {}", args.games.display()))?,
+        RegisteredGame::ShipWreck(_) => ingest_directory::<ShipWreckGame, _>(
+            &mut conn,
+            &args.games,
+            ShipWreckGame::NAME,
+            &ShipWreckMetrics,
         )
         .with_context(|| format!("ingesting {}", args.games.display()))?,
     };
@@ -124,6 +131,12 @@ fn build_report(
             playtest_cribbage::report::write_per_card_section(&mut md, conn)
                 .context("writing Cribbage per-card section")?;
         }
+        RegisteredGame::ShipWreck(_) => {
+            playtest_shipwreck::report::write_game_shape_section(&mut md, conn)
+                .context("writing ShipWreck game-shape section")?;
+            playtest_shipwreck::report::write_per_player_section(&mut md, conn)
+                .context("writing ShipWreck per-player section")?;
+        }
     }
 
     Ok(md.into_string())
@@ -132,5 +145,6 @@ fn build_report(
 fn game_name(game: &RegisteredGame) -> &'static str {
     match game {
         RegisteredGame::Cribbage(_) => CribbageGame::NAME,
+        RegisteredGame::ShipWreck(_) => ShipWreckGame::NAME,
     }
 }

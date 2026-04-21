@@ -13,6 +13,7 @@ use playtest_core::{Agent, Game, GameLoop};
 use playtest_cribbage::{CribbageConfig, CribbageGame, Event as CribbageEvent};
 use playtest_log::{EventLogWriter, LogHeader, LogRecord, SCHEMA_VERSION, compute_config_hash};
 use playtest_ports::{Clock, GameEventSink};
+use playtest_shipwreck::{Event as ShipWreckEvent, ShipWreckConfig, ShipWreckGame};
 
 use crate::agent_registry::build_agent;
 use crate::game_registry::RegisteredGame;
@@ -32,6 +33,9 @@ pub fn run_single_game_into_sink(
     match game {
         RegisteredGame::Cribbage(g) => {
             run_cribbage_into_sink(*g, agent_names, seed, fixed_time, sink)
+        }
+        RegisteredGame::ShipWreck(g) => {
+            run_shipwreck_into_sink(*g, agent_names, seed, fixed_time, sink)
         }
     }
 }
@@ -101,6 +105,79 @@ fn run_cribbage_into_sink(
     };
 
     let final_line = serde_json::to_string(&LogRecord::<CribbageEvent>::Final {
+        winner: result.winner,
+        reason: result.reason,
+        scores: result.scores,
+        finished_at,
+    })?;
+    sink.emit(&final_line)?;
+    sink.flush()?;
+    Ok(())
+}
+
+fn run_shipwreck_into_sink(
+    game: ShipWreckGame,
+    agent_names: &[String],
+    seed: u64,
+    fixed_time: Option<u64>,
+    sink: &mut dyn GameEventSink,
+) -> Result<()> {
+    // ShipWreck's config is driven by the agent count — the CLI's
+    // `--agents a,b,c` implies a 3-player game. The registry validates
+    // the count is in range before we get here, so it's safe to unwrap.
+    let n = u8::try_from(agent_names.len()).expect("agent count fits in u8");
+    let cfg = ShipWreckConfig::new(n)
+        .expect("agent count validated against registry player range before dispatch");
+
+    let mut agents: Vec<Box<dyn Agent<ShipWreckGame>>> = agent_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let mix = 0x9E37_79B9_7F4A_7C15u64
+                .wrapping_mul(u64::try_from(i + 1).expect("small i"));
+            let agent_seed = seed ^ mix;
+            build_agent::<ShipWreckGame>(name, agent_seed)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let started_at = if let Some(t) = fixed_time {
+        t
+    } else {
+        ProductionClock::new().now()
+    };
+
+    let header = LogHeader {
+        schema: SCHEMA_VERSION,
+        game: ShipWreckGame::NAME.to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        seed,
+        agents: agent_names.to_vec(),
+        started_at,
+        config_hash: compute_config_hash(&cfg)?,
+    };
+
+    {
+        let mut writer: EventLogWriter<ShipWreckEvent> = EventLogWriter::new(sink);
+        writer.write_header(&header)?;
+    }
+
+    let mut loop_ = GameLoop::new(&game, game.initial_state(seed, &cfg));
+    let mut chance_rng = ProductionRng::from_seed(seed);
+
+    let result = {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(loop_.run(agents.as_mut_slice(), &mut chance_rng, sink))?
+    };
+
+    let finished_at = if let Some(t) = fixed_time {
+        t
+    } else {
+        ProductionClock::new().now()
+    };
+
+    let final_line = serde_json::to_string(&LogRecord::<ShipWreckEvent>::Final {
         winner: result.winner,
         reason: result.reason,
         scores: result.scores,
