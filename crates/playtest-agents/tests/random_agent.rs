@@ -40,6 +40,7 @@ impl Game for NullGame {
     }
     fn apply_event(&self, (): &mut (), _e: &NoopEvent) {}
     fn public_view(&self, (): &(), _p: PlayerId) {}
+    fn determinize(&self, (): &(), _observer: PlayerId, _rng: &mut dyn Rng) {}
     fn game_over(&self, (): &()) -> Option<GameResult> {
         None
     }

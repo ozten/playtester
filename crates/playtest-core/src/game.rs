@@ -102,6 +102,23 @@ pub trait Game {
     /// Redacted view of state for a given player.
     fn public_view(&self, state: &Self::State, player: PlayerId) -> Self::PublicView;
 
+    /// Produce a determinized state: a concrete sample consistent with
+    /// everything `observer` knows. Hidden information (opponent hands,
+    /// undealt deck, cards the observer hasn't seen) is resampled from
+    /// the unknown pool using `rng`; public state is copied verbatim.
+    /// Called by search algorithms (e.g. ISMCTS) that need to simulate
+    /// forward from the observer's epistemic position.
+    ///
+    /// The invariant every implementation must satisfy:
+    /// `public_view(determinize(s, p, rng), p) == public_view(s, p)`.
+    /// Games with no hidden information can return `state.clone()`.
+    fn determinize(
+        &self,
+        state: &Self::State,
+        observer: PlayerId,
+        rng: &mut dyn playtest_ports::Rng,
+    ) -> Self::State;
+
     /// Has the game ended? `Some` means yes and provides the result;
     /// `None` means the loop should continue.
     fn game_over(&self, state: &Self::State) -> Option<GameResult>;

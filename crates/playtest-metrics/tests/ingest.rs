@@ -56,6 +56,7 @@ impl Game for TestGame {
     }
     fn apply_event(&self, (): &mut (), _e: &TestEvent) {}
     fn public_view(&self, (): &(), _p: PlayerId) {}
+    fn determinize(&self, (): &(), _observer: PlayerId, _rng: &mut dyn Rng) {}
     fn game_over(&self, (): &()) -> Option<GameResult> {
         None
     }

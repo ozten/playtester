@@ -104,6 +104,16 @@ impl Game for TallyGame {
         state.clone()
     }
 
+    fn determinize(
+        &self,
+        state: &TallyState,
+        _observer: PlayerId,
+        _rng: &mut dyn Rng,
+    ) -> TallyState {
+        // TallyGame has no hidden information — identity is correct.
+        state.clone()
+    }
+
     fn game_over(&self, state: &TallyState) -> Option<GameResult> {
         let target = state.target?;
         if state.scores[0] >= target || state.scores[1] >= target {
@@ -338,6 +348,7 @@ async fn game_over_on_initial_state_short_circuits_immediately() {
         }
         fn apply_event(&self, (): &mut (), _event: &TallyEvent) {}
         fn public_view(&self, (): &(), _player: PlayerId) {}
+        fn determinize(&self, (): &(), _observer: PlayerId, _rng: &mut dyn Rng) {}
         fn game_over(&self, (): &()) -> Option<GameResult> {
             Some(GameResult {
                 winner: None,
@@ -360,6 +371,28 @@ async fn game_over_on_initial_state_short_circuits_immediately() {
 
     assert_eq!(result.reason, EndReason::Draw);
     assert!(sink.lines.is_empty(), "no events should be emitted");
+}
+
+#[test]
+fn determinize_on_tally_game_returns_equal_state() {
+    // TallyGame has no hidden information, so determinize is the
+    // identity function. This is the trait-level smoke test for the
+    // invariant `public_view(determinize(s, p, rng), p) == public_view(s, p)`.
+    let game = TallyGame;
+    let state = TallyState {
+        target: Some(7),
+        scores: [3, 2],
+        next_player: 0,
+    };
+    let mut rng = ScriptedRng::new([42, 17, 99]);
+    let d0 = game.determinize(&state, 0, &mut rng);
+    let d1 = game.determinize(&state, 1, &mut rng);
+    assert_eq!(d0.target, state.target);
+    assert_eq!(d0.scores, state.scores);
+    assert_eq!(d0.next_player, state.next_player);
+    assert_eq!(d1.target, state.target);
+    assert_eq!(d1.scores, state.scores);
+    assert_eq!(d1.next_player, state.next_player);
 }
 
 #[tokio::test]

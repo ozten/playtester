@@ -23,7 +23,7 @@ pub struct CribbageConfig;
 
 /// What an agent sees on their turn. Hides the opponent's hand and
 /// the crib contents; exposes everything else needed to play.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicView {
     pub player: PlayerId,
     pub own_hand: Hand,
@@ -90,6 +90,15 @@ impl Game for CribbageGame {
 
     fn apply_event(&self, state: &mut GameState, event: &Event) {
         state.apply_event(event);
+    }
+
+    fn determinize(
+        &self,
+        state: &GameState,
+        observer: PlayerId,
+        rng: &mut dyn Rng,
+    ) -> GameState {
+        crate::determinize::determinize(state, observer, rng)
     }
 
     fn public_view(&self, state: &GameState, player: PlayerId) -> PublicView {

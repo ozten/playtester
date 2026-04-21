@@ -76,6 +76,14 @@ impl Game for TallyGame {
     fn public_view(&self, s: &TallyState, _p: PlayerId) -> TallyState {
         s.clone()
     }
+    fn determinize(
+        &self,
+        s: &TallyState,
+        _observer: PlayerId,
+        _rng: &mut dyn Rng,
+    ) -> TallyState {
+        s.clone()
+    }
     fn game_over(&self, s: &TallyState) -> Option<GameResult> {
         let cfg_target: u32 = 10;
         if s.scores[0] >= cfg_target || s.scores[1] >= cfg_target {

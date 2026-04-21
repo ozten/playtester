@@ -45,6 +45,7 @@ impl Game for NullGame {
     }
     fn apply_event(&self, (): &mut (), _e: &NoopEvent) {}
     fn public_view(&self, (): &(), _p: PlayerId) {}
+    fn determinize(&self, (): &(), _observer: PlayerId, _rng: &mut dyn Rng) {}
     fn game_over(&self, (): &()) -> Option<GameResult> {
         None
     }
@@ -140,6 +141,14 @@ impl Game for TallyGame {
         s.next_player = 1 - e.player;
     }
     fn public_view(&self, s: &TallyState, _p: PlayerId) -> TallyState {
+        s.clone()
+    }
+    fn determinize(
+        &self,
+        s: &TallyState,
+        _observer: PlayerId,
+        _rng: &mut dyn Rng,
+    ) -> TallyState {
         s.clone()
     }
     fn game_over(&self, s: &TallyState) -> Option<GameResult> {
