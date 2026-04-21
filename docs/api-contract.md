@@ -10,7 +10,7 @@ If something is documented here but not in `openapi.json`, the OpenAPI
 dump is stale — regenerate with:
 
 ```sh
-cargo run -p playtest-cli -- api-schema --out docs/openapi.json
+cargo run --release -p playtest-cli -- api-schema --out docs/openapi.json
 ```
 
 Audience: someone building the SvelteKit frontend who would rather
@@ -443,7 +443,7 @@ frontend's responsibility to re-run codegen on each contract change.
 ## Regenerating the dump
 
 ```sh
-cargo run -p playtest-cli -- api-schema --out docs/openapi.json
+cargo run --release -p playtest-cli -- api-schema --out docs/openapi.json
 ```
 
 Commit the result alongside whatever Rust change drove it. There is

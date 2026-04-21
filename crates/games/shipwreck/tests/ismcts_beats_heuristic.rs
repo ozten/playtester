@@ -138,3 +138,23 @@ fn ismcts_beats_heuristic_10k() {
         "R2.3 (shipwreck) not met: rate {rate:.4} < 0.65 (wins={iw}, losses={hw})"
     );
 }
+
+/// 1,000-game variant at full iter=1000 budget. Exists because the full
+/// R2.3 10K × iter=1000 soak takes multiple hours on the reference
+/// machine — this variant produces a trustworthy rate (stdev ~1.6 pp)
+/// in ~45 min, which is sufficient to decide whether the 65% bar is
+/// cleared without paying the full 10K wall-clock cost in one pass.
+#[test]
+#[ignore = "1K games — practical-budget R2.3 signal for shipwreck"]
+fn ismcts_beats_heuristic_1k_iter1000() {
+    let (iw, hw, draws) = run_match_parallel(1_000, 1000);
+    let total = iw + hw + draws;
+    let rate = f64::from(iw) / f64::from(total);
+    println!(
+        "ismcts-shipwreck (iter=1000) vs heuristic-shipwreck over {total} games: wins={iw}, losses={hw}, draws={draws}, rate={rate:.4}"
+    );
+    assert!(
+        rate >= 0.65,
+        "R2.3 (shipwreck, 1K variant) not met: rate {rate:.4} < 0.65 (wins={iw}, losses={hw})"
+    );
+}

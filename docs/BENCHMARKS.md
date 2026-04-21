@@ -7,6 +7,8 @@ The exit criteria from `playtest-roadmap.md` tracked here:
 - **R0.11** — Zero panics over a 100,000-game soak test.
 - **R1.5** — Per-card design-insight metrics surface on a fixed-deck game.
 - **R1.6** — `playtest report` over 10,000 games completes in under 30 seconds.
+- **R2.2** — `HeuristicAgent` beats `RandomAgent` > 90% over 10K games on every registered game.
+- **R2.3** — `ISMCTSAgent` beats `HeuristicAgent` >= 65% over 10K games on every registered game.
 - **R9.6** — ShipWreck: 10,000 random-vs-random games all terminate with a
   valid `GameResult`, ≥95% via `EndReason::Other("deck_exhausted")`,
   within a 120-second wall-clock budget.
@@ -127,6 +129,51 @@ the end-to-end timing above is captured here rather than in a test
 because a 30 s budget tied to machine speed is brittle as an
 assertion.
 
+## R2.2 — HeuristicAgent beats RandomAgent on both games
+
+| Game | Budget | Measured | Bar | Margin |
+|---|---|---|---|---|
+| Cribbage | 10,000 games | **96.66%** | ≥ 90% | +6.66 pp |
+| ShipWreck | 10,000 games | **92.48%** | ≥ 90% | +2.48 pp |
+
+Both games use the per-game eval function (`cribbage_eval` / `shipwreck_eval`) and `HeuristicAgent::with_temperature(0.5)`. Cribbage's higher margin reflects that its eval captures more of the game's structure (scoring combinations directly surface in the heuristic); ShipWreck's eval is a coarser resource-plus-raft-length heuristic and the event-card randomness dampens the edge.
+
+Reproduce:
+
+```bash
+cargo test --release -p playtest-cribbage   --test heuristic_beats_random -- --ignored --nocapture
+cargo test --release -p playtest-shipwreck  --test heuristic_beats_random -- --ignored --nocapture
+```
+
+Sources: `crates/games/{cribbage,shipwreck}/tests/heuristic_beats_random.rs`.
+
+## R2.3 — ISMCTSAgent beats HeuristicAgent (SO-ISMCTS)
+
+| Game | Games | Iterations | Measured | Bar | Wall time (4-core reference) |
+|---|---|---|---|---|---|
+| Cribbage | 10,000 | 1,000 | **75.38%** | ≥ 65% | 21.9 min |
+
+**Cribbage** cleared R2.3 with a 10.4 pp margin (7,538 wins, 2,462 losses, 0 draws).
+
+**ShipWreck** — the full 10K × iter=1000 soak is single-machine-impractical on the 4-core reference (estimated 7+ hours). A practical-budget variant (`ismcts_beats_heuristic_1k_iter1000`, 1,000 games × iter=1000) is provided — it produces a trustworthy rate (stdev ~1.6 pp) in ~45 min and is what a workstation can realistically verify. The full 10K test remains the formal spec; a dedicated benchmark machine or a multi-shard scheduled-CI run can produce the 10K rate if needed.
+
+Both games run `ISMCTSAgent::with_eval` at the registry default (`iterations = 1000, exploration_c = sqrt(2), rollout_depth = 50 (shipwreck) / 80 (cribbage)`). SO-ISMCTS determinizes the opponent's hidden information once per iteration via `Game::determinize`, descends with UCB1, rolls out with random action choice plus eval fallback at the depth cutoff, and backpropagates a sigmoid-normalized reward from the observer's perspective.
+
+Reproduce:
+
+```bash
+# Cribbage full R2.3 (21.9 min on 4-core reference)
+cargo test --release -p playtest-cribbage  --test ismcts_beats_heuristic ismcts_beats_heuristic_10k           -- --ignored --nocapture
+
+# ShipWreck practical R2.3 (~45 min on 4-core reference)
+cargo test --release -p playtest-shipwreck --test ismcts_beats_heuristic ismcts_beats_heuristic_1k_iter1000   -- --ignored --nocapture
+
+# ShipWreck formal-spec R2.3 (multi-hour, benchmark-machine)
+cargo test --release -p playtest-shipwreck --test ismcts_beats_heuristic ismcts_beats_heuristic_10k           -- --ignored --nocapture
+```
+
+Sources: `crates/games/{cribbage,shipwreck}/tests/ismcts_beats_heuristic.rs`. The 10K and 1K variants use rayon to parallelize games across cores, each worker driving a current-thread tokio runtime.
+
 ## R9.6 — ShipWreck 10K-game soak
 
 | Metric | Value |
@@ -184,9 +231,13 @@ cargo test --workspace
 cargo test -p playtest-core --test determinism_audit
 
 # Soak suite (nightly, not per-PR)
-cargo test --release -p playtest-cli        --test soak_10k   -- --ignored --nocapture
-cargo test --release -p playtest-cli        --test soak_100k  -- --ignored --nocapture
-cargo test --release -p playtest-shipwreck  --test soak_10k   -- --ignored --nocapture
+cargo test --release -p playtest-cli        --test soak_10k              -- --ignored --nocapture
+cargo test --release -p playtest-cli        --test soak_100k             -- --ignored --nocapture
+cargo test --release -p playtest-shipwreck  --test soak_10k              -- --ignored --nocapture
+cargo test --release -p playtest-cribbage   --test heuristic_beats_random -- --ignored --nocapture
+cargo test --release -p playtest-shipwreck  --test heuristic_beats_random -- --ignored --nocapture
+cargo test --release -p playtest-cribbage   --test ismcts_beats_heuristic -- --ignored --nocapture
+cargo test --release -p playtest-shipwreck  --test ismcts_beats_heuristic -- --ignored --nocapture
 ```
 
 ## CI
