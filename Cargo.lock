@@ -1168,6 +1168,7 @@ dependencies = [
  "playtest-log",
  "playtest-registry",
  "reqwest",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",

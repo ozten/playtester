@@ -1,0 +1,1466 @@
+{
+  "components": {
+    "schemas": {
+      "AgentRegistryEntry": {
+        "description": "One registered agent kind, returned by `GET /registry/agents`.",
+        "properties": {
+          "display_name": {
+            "description": "Human-readable label for UI menus.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable id used in [`crate::runs::CreateRunRequest::agents`] (e.g. `\"random\"`).",
+            "type": "string"
+          },
+          "supported_games": {
+            "default": [],
+            "description": "Registered game ids this agent kind supports. Empty means \"game-agnostic\" (usable with any game).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "display_name",
+          "id"
+        ],
+        "type": "object"
+      },
+      "ApiError": {
+        "description": "Uniform error body, shared by every endpoint.",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ApiErrorCode",
+            "description": "Machine-readable code — clients branch on this, not on `message`."
+          },
+          "details": {
+            "description": "Optional structured payload (field path, offending value, etc.). Shape is error-specific; carried as untyped JSON so the API crate does not need to enumerate every possibility.",
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable, user-facing explanation.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "ApiErrorCode": {
+        "description": "Machine-readable error taxonomy.\n\nAny variant added here must also be assigned an HTTP status in [`http_status`]. The compiler enforces exhaustiveness.",
+        "oneOf": [
+          {
+            "description": "The `game` field in a request did not name a registered game.",
+            "enum": [
+              "UnknownGame"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "An `agents[_]` entry did not name a registered agent kind.",
+            "enum": [
+              "UnknownAgent"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The `config` blob failed validation against the target game's config schema.",
+            "enum": [
+              "InvalidConfig"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The requested run id was not found (or has been evicted).",
+            "enum": [
+              "RunNotFound"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The requested game id / log file was not found.",
+            "enum": [
+              "GameNotFound"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "An `offset` or `limit` query parameter was negative, zero where positive is required, or exceeds server-enforced ceilings.",
+            "enum": [
+              "InvalidPaginationParams"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "An unexpected server-side failure. The `message` is safe to show users; `details` (if populated) is meant for operators.",
+            "enum": [
+              "Internal"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The endpoint is scaffolded but not yet implemented. Used for routes shipped as stubs ahead of their full implementation (e.g. `/api/reports` in Unit 17, proper implementation deferred to a later unit).",
+            "enum": [
+              "NotImplemented"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "ApiResponse_for_AnyValue": {
+        "description": "Uniform envelope wrapping every JSON response the server emits.\n\nThe envelope guarantees two things to consumers:\n\n1. `api_version` is always present — clients can refuse to parse a response whose major version differs from what they compiled against. 2. Errors share one shape across every endpoint — success is `data: Some(..), errors: []`, failure is `data: None, errors: [..]`. Partial success (e.g. batch validation) is `data: Some(..), errors: [..]`.",
+        "properties": {
+          "api_version": {
+            "description": "The wire-contract version this response conforms to. Always equal to [`crate::API_VERSION`] at send time.",
+            "type": "string"
+          },
+          "data": {
+            "description": "The endpoint-specific payload, if the request succeeded (fully or partially).",
+            "nullable": true
+          },
+          "errors": {
+            "default": [],
+            "description": "Zero or more errors. Empty on full success; populated on partial success or outright failure.",
+            "items": {
+              "$ref": "#/components/schemas/ApiError"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "api_version"
+        ],
+        "type": "object"
+      },
+      "CreateRunRequest": {
+        "description": "Request body for `POST /runs`.\n\n`config` is carried as untyped JSON so this crate stays game-agnostic; the server parses it against the named game's schema before accepting the run.",
+        "properties": {
+          "agents": {
+            "description": "Ordered list of agent kind ids, one per seat. Length must match the game's required player count.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "config": {
+            "description": "Game-specific configuration blob. Shape is defined by the target game's `config_schema` (see [`crate::registry::GameRegistryEntry`]).",
+            "nullable": true
+          },
+          "game": {
+            "description": "Registered game id (e.g. `\"cribbage\"`).",
+            "type": "string"
+          },
+          "games_count": {
+            "description": "How many games to play in this run. Must be >= 1.",
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "seed": {
+            "description": "Optional base seed. `None` means \"pick one at run start\".",
+            "format": "uint64",
+            "minimum": 0.0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agents",
+          "game",
+          "games_count"
+        ],
+        "type": "object"
+      },
+      "EventPage": {
+        "description": "Paginated page of log lines returned by `GET /games/:id/events`.",
+        "properties": {
+          "events": {
+            "description": "The page's records, in on-disk order.",
+            "items": {
+              "$ref": "#/components/schemas/LogLineDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "description": "Maximum page size that was requested.",
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Zero-based offset of the first record in `events`.",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "total": {
+            "description": "Total number of records in the log (header + events + final).",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "events",
+          "limit",
+          "offset",
+          "total"
+        ],
+        "type": "object"
+      },
+      "GameMetadata": {
+        "description": "Full metadata row returned by `GET /games/:id`. Mirrors the JSON contents of a log's header plus a few server-side additions.",
+        "properties": {
+          "agents": {
+            "description": "Agent kind ids, one per seat, from the header.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "config_hash": {
+            "description": "Hex-encoded hash of the game config.",
+            "type": "string"
+          },
+          "finished_at": {
+            "description": "Wall-clock time the game finished, Unix epoch milliseconds. `None` if the log has no `Final` record (crashed mid-play).",
+            "format": "uint64",
+            "minimum": 0.0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "game": {
+            "description": "Registered game id (e.g. `\"cribbage\"`).",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable game id (usually derived from log filename).",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "Run id this game belongs to, if known.",
+            "nullable": true,
+            "type": "string"
+          },
+          "schema": {
+            "description": "Log schema version (from `LogHeader.schema`).",
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "scores": {
+            "description": "Final scores per seat, if the game ended cleanly.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "seed": {
+            "description": "Base seed the run was started with.",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "started_at": {
+            "description": "Wall-clock time the game started, Unix epoch milliseconds.",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "version": {
+            "description": "Engine/build version stamped at write time.",
+            "type": "string"
+          },
+          "winner": {
+            "description": "Winning player seat, if the game ended cleanly.",
+            "format": "uint32",
+            "minimum": 0.0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agents",
+          "config_hash",
+          "game",
+          "id",
+          "schema",
+          "seed",
+          "started_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "GameRegistryEntry": {
+        "description": "One registered game, returned by `GET /registry/games`.",
+        "properties": {
+          "config_schema": {
+            "description": "JSON Schema describing the shape of this game's `config` blob. Carried as raw JSON so the API crate does not have to depend on any particular schema library at runtime."
+          },
+          "display_name": {
+            "description": "Human-readable label for UI menus.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable id used in [`crate::runs::CreateRunRequest::game`] (e.g. `\"cribbage\"`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "config_schema",
+          "display_name",
+          "id"
+        ],
+        "type": "object"
+      },
+      "GameSummary": {
+        "description": "Short summary row returned by `GET /games`.",
+        "properties": {
+          "finished_at": {
+            "description": "Wall-clock time the game finished, Unix epoch milliseconds. `None` if the log has no `Final` record (crashed mid-play).",
+            "format": "uint64",
+            "minimum": 0.0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "game": {
+            "description": "Registered game id (e.g. `\"cribbage\"`).",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable game id (usually derived from log filename).",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "Run id this game belongs to, if known.",
+            "nullable": true,
+            "type": "string"
+          },
+          "started_at": {
+            "description": "Wall-clock time the game started, Unix epoch milliseconds.",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "winner": {
+            "description": "Winning player seat, if the game ended cleanly.",
+            "format": "uint32",
+            "minimum": 0.0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "game",
+          "id",
+          "started_at"
+        ],
+        "type": "object"
+      },
+      "HealthBody": {
+        "properties": {
+          "api_version": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "api_version"
+        ],
+        "type": "object"
+      },
+      "LogLineDto": {
+        "description": "One record from an event log, carried to the client as the already-serialized JSON object. Using `JsonValue` keeps the API crate game-agnostic — the exact shape of `event.payload` is defined by the game crate that produced the log.",
+        "properties": {
+          "kind": {
+            "description": "Kind discriminant as it appears on the JSONL line (`\"header\"`, `\"event\"`, or `\"final\"`).",
+            "type": "string"
+          },
+          "line": {
+            "description": "The full JSON object for this line. Callers parse this against the game's event type to recover typed values."
+          }
+        },
+        "required": [
+          "kind",
+          "line"
+        ],
+        "type": "object"
+      },
+      "RunStatus": {
+        "description": "Lifecycle state of a run.",
+        "oneOf": [
+          {
+            "description": "Accepted by the server but not yet started.",
+            "enum": [
+              "Pending"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Currently executing games.",
+            "enum": [
+              "Running"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "All games finished successfully.",
+            "enum": [
+              "Completed"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Terminated early due to an error.",
+            "enum": [
+              "Failed"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "RunSummary": {
+        "description": "Summary row returned by `GET /runs` and `GET /runs/:id`.",
+        "properties": {
+          "agents": {
+            "description": "Agent kind ids, one per seat.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "description": "Wall-clock time the run was created, Unix epoch milliseconds.",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "finished_at": {
+            "description": "Wall-clock time the run finished, Unix epoch milliseconds. `None` while `status` is `Pending` or `Running`.",
+            "format": "uint64",
+            "minimum": 0.0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "game": {
+            "description": "Registered game id this run is playing.",
+            "type": "string"
+          },
+          "games_completed": {
+            "description": "Games that have finished (successfully or not) so far.",
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "games_count": {
+            "description": "Total games requested.",
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "id": {
+            "description": "Server-assigned run id.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Base seed chosen for the run.",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus",
+            "description": "Current lifecycle state."
+          }
+        },
+        "required": [
+          "agents",
+          "created_at",
+          "game",
+          "games_completed",
+          "games_count",
+          "id",
+          "seed",
+          "status"
+        ],
+        "type": "object"
+      },
+      "SseFrame": {
+        "description": "One frame in an SSE stream.\n\nSerialized with `#[serde(tag = \"kind\", content = \"data\")]`, so the JSON shape is `{\"kind\":\"event\",\"data\":{...}}` / `{\"kind\":\"heartbeat\"}` / etc.",
+        "oneOf": [
+          {
+            "description": "First frame on every stream. `data` is the JSON object for the log's header record.",
+            "properties": {
+              "data": true,
+              "kind": {
+                "enum": [
+                  "header"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An in-progress game event. `data` is the JSON object for one `Event` record from the log.",
+            "properties": {
+              "data": true,
+              "kind": {
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Last frame when a game ends cleanly. `data` is the JSON object for the log's `Final` record.",
+            "properties": {
+              "data": true,
+              "kind": {
+                "enum": [
+                  "final"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Keep-alive tick so proxies do not time out idle streams. Carries no payload.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "heartbeat"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    }
+  },
+  "info": {
+    "description": "Localhost HTTP + Server-Sent Events surface for the playtester engine. See docs/api-contract.md for versioning policy, SSE semantics, and error catalog.",
+    "title": "Playtester API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/agents-registry": {
+      "get": {
+        "description": "Returns every agent kind the server can dispatch. Use the `id` field in `CreateRunRequest.agents`.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/AgentRegistryEntry"
+                      },
+                      "type": "array"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Known agent catalog."
+          }
+        },
+        "summary": "List registered agent kinds."
+      }
+    },
+    "/api/games-registry": {
+      "get": {
+        "description": "Returns every game the server can dispatch. Use the `id` field in a `CreateRunRequest.game`.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/GameRegistryEntry"
+                      },
+                      "type": "array"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Known game catalog."
+          }
+        },
+        "summary": "List registered games."
+      }
+    },
+    "/api/health": {
+      "get": {
+        "description": "Always returns 200 if the server is up. `data.api_version` equals the running server's `API_VERSION`; clients SHOULD refuse further requests if the major version differs from what they compiled against.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "api_version": "1.0.0",
+                  "data": {
+                    "api_version": "1.0.0",
+                    "status": "ok"
+                  },
+                  "errors": []
+                },
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/HealthBody"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Liveness probe succeeded."
+          }
+        },
+        "summary": "Liveness probe plus wire-contract version."
+      }
+    },
+    "/api/reports": {
+      "post": {
+        "description": "NOT IMPLEMENTED. Returns HTTP 501 + `ApiErrorCode::NotImplemented` until a later unit wires up report generation.",
+        "responses": {
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Endpoint scaffolded but not yet implemented."
+          }
+        },
+        "summary": "Build a markdown report for a run (stub)."
+      }
+    },
+    "/api/reports/{report_id}": {
+      "get": {
+        "description": "NOT IMPLEMENTED. Returns HTTP 501 + `ApiErrorCode::NotImplemented`.",
+        "parameters": [
+          {
+            "description": "Report id.",
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Endpoint scaffolded but not yet implemented."
+          }
+        },
+        "summary": "Fetch report metadata (stub)."
+      }
+    },
+    "/api/reports/{report_id}/markdown": {
+      "get": {
+        "description": "NOT IMPLEMENTED. Returns HTTP 501 + `ApiErrorCode::NotImplemented`.",
+        "parameters": [
+          {
+            "description": "Report id.",
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Endpoint scaffolded but not yet implemented."
+          }
+        },
+        "summary": "Fetch raw markdown body of a report (stub)."
+      }
+    },
+    "/api/runs": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/RunSummary"
+                      },
+                      "type": "array"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Run summaries, newest first."
+          }
+        },
+        "summary": "List active and recently-completed runs."
+      },
+      "post": {
+        "description": "The run is accepted synchronously and executed in the background; poll `GET /api/runs/{run_id}` or subscribe to `/api/runs/{run_id}/stream` to observe progress.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/RunSummary"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Run accepted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Validation failure (unknown game, unknown agent, bad `games_count`, wrong agent count)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Internal failure registering the run."
+          }
+        },
+        "summary": "Create a run and start playing games."
+      }
+    },
+    "/api/runs/{run_id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "UUID of the run.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/RunSummary"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Run summary."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`run_id` is not a known run."
+          }
+        },
+        "summary": "Fetch one run's summary."
+      }
+    },
+    "/api/runs/{run_id}/games": {
+      "get": {
+        "parameters": [
+          {
+            "description": "UUID of the run.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/GameSummary"
+                      },
+                      "type": "array"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Game summaries, in start order."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`run_id` is not a known run."
+          }
+        },
+        "summary": "List games inside a run."
+      }
+    },
+    "/api/runs/{run_id}/games/{game_id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "UUID of the run.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Server-assigned game id (log filename stem).",
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/GameMetadata"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Game metadata row."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`run_id` or `game_id` unknown."
+          }
+        },
+        "summary": "Fetch one game's full metadata."
+      }
+    },
+    "/api/runs/{run_id}/games/{game_id}/events": {
+      "get": {
+        "description": "Returns a window of records from the game's JSONL log. Records are returned in on-disk order: header, zero or more events, then a final record (if the game ended cleanly). Use `offset` + `limit` to page forward; the response's `total` field is the current line count of the log.",
+        "parameters": [
+          {
+            "description": "UUID of the run.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Server-assigned game id.",
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Zero-based starting offset.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Max records in the page (1..=10000). Default 100.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/EventPage"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "One page of records."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`limit` out of range."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`run_id` or `game_id` unknown."
+          }
+        },
+        "summary": "Paginated page of log lines."
+      }
+    },
+    "/api/runs/{run_id}/games/{game_id}/stream": {
+      "get": {
+        "description": "Server-Sent Events stream. On connect the server replays any events up to the current tail of the on-disk log, then switches to the live feed. Reconnecting clients SHOULD send `Last-Event-ID: <tick>`; the server will skip any tick id less than or equal to that value. Each `event:`-typed frame carries its tick as the frame's SSE `id`. `heartbeat` frames carry no tick.",
+        "parameters": [
+          {
+            "description": "UUID of the run.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Server-assigned game id.",
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tick id of the last `event`-typed SSE frame the client received. On reconnect the server skips any frame with a tick id <= this value.",
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/SseFrame"
+                }
+              }
+            },
+            "description": "Infinite SSE stream of `SseFrame` values. Ends on the first `final` frame."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`run_id` or `game_id` unknown."
+          }
+        },
+        "summary": "Live SSE stream of a game's log."
+      }
+    },
+    "/api/runs/{run_id}/stream": {
+      "get": {
+        "description": "Server-Sent Events stream. Frames fire when games inside this run start and finish, plus one terminal `run_complete` frame. Clients may reconnect with `Last-Event-ID` but run-level frames are not re-delivered — use the per-game stream for replay semantics.",
+        "parameters": [
+          {
+            "description": "UUID of the run.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/SseFrame"
+                }
+              }
+            },
+            "description": "Infinite SSE stream of `{game_started, game_finished, run_complete}` frames."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`run_id` is not a known run."
+          }
+        },
+        "summary": "SSE stream of run-level events."
+      }
+    }
+  }
+}

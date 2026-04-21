@@ -34,6 +34,9 @@ enum Command {
 
     /// Start the HTTP + SSE server.
     Serve(commands::serve::ServeArgs),
+
+    /// Dump the HTTP API's OpenAPI 3.1 spec to a file (or `-` for stdout).
+    ApiSchema(commands::api_schema::ApiSchemaArgs),
 }
 
 fn main() -> Result<()> {
@@ -43,5 +46,6 @@ fn main() -> Result<()> {
         Command::Replay(args) => commands::replay::run(args),
         Command::Report(args) => commands::report::run(args),
         Command::Serve(args) => commands::serve::run(args),
+        Command::ApiSchema(args) => commands::api_schema::run(args),
     }
 }

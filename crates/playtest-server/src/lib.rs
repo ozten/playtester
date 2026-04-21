@@ -34,8 +34,11 @@ use tokio::sync::broadcast;
 
 pub mod routes;
 pub mod runner;
+pub mod schema;
 pub mod sse;
 pub mod state;
+
+pub use schema::openapi_json;
 
 use state::AppState;
 
