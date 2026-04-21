@@ -1,13 +1,16 @@
 ---
 title: "feat: Playtester engine foundations + analytics spine (Cribbage, Rust)"
 type: feat
-status: active
+status: shipped
 date: 2026-04-21
 origin: playtest-roadmap.md
 last_reconciled: 2026-04-21
+continuation: docs/plans/2026-04-21-002-feat-web-spine-shipwreck-phase-2-plan.md
 ---
 
 # feat: Playtester engine foundations + analytics spine (Cribbage, Rust)
+
+> **Status: shipped.** Units 1–15 all landed (Phase 0 + Phase 1). Exit criteria met: deterministic 10K-game run in <60s/core (R0.9), 100K-game soak with zero panics (R0.11), every game replayable (R0.10), 10K-game markdown report in <30s (R1.6). Next planning pass lives in [2026-04-21-002-feat-web-spine-shipwreck-phase-2-plan.md](2026-04-21-002-feat-web-spine-shipwreck-phase-2-plan.md), which (a) pulls the roadmap's Phase 8 web frontend forward as a SvelteKit + SSE spine, (b) adds full ShipWreck as the multi-game proof the `Game` trait and metrics spine were designed for, and (c) ships Phase 2 heuristic agents + ISMCTS. The TUI option from Phase 8 is formally dropped there.
 
 ## Overview
 
