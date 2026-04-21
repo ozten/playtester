@@ -13,6 +13,7 @@ workspace = true
 playtest-core.workspace = true
 playtest-metrics.workspace = true
 playtest-ports.workspace = true
+rusqlite.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 uuid.workspace = true

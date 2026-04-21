@@ -1,8 +1,9 @@
-//! `playtest` binary: subcommand dispatch for `play` and `replay`.
+//! `playtest` binary: subcommand dispatch for `play`, `replay`, and
+//! `report`.
 //!
-//! `report` arrives in Unit 13 (Phase 1). The CLI uses
-//! [`anyhow::Result`] at the binary boundary and propagates the
-//! [`thiserror`]-based errors from the libraries underneath.
+//! The CLI uses [`anyhow::Result`] at the binary boundary and
+//! propagates the [`thiserror`]-based errors from the libraries
+//! underneath.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -29,6 +30,9 @@ enum Command {
 
     /// Replay a recorded JSONL event log and print its states.
     Replay(commands::replay::ReplayArgs),
+
+    /// Ingest a directory of event logs and write a markdown report.
+    Report(commands::report::ReportArgs),
 }
 
 fn main() -> Result<()> {
@@ -36,5 +40,6 @@ fn main() -> Result<()> {
     match &cli.command {
         Command::Play(args) => commands::play::run(args),
         Command::Replay(args) => commands::replay::run(args),
+        Command::Report(args) => commands::report::run(args),
     }
 }

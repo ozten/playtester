@@ -167,7 +167,30 @@ impl Accumulator {
         if let Some(last) = acc.hands.last_mut() {
             last.finalize_kept();
         }
+        // The engine only emits `EndGame` for pegging-phase wins;
+        // show-phase and crib-count wins signal game-over via
+        // `state.game_over()` instead. For those logs `end_phase`
+        // stays unset until we capture "whatever phase the last event
+        // was in" — which is what the reporter wants anyway. Callers
+        // with a Final record should also supplement `winner` via
+        // [`Self::supplement_from_final`].
+        if acc.end_phase.is_none() && !events.is_empty() {
+            acc.end_phase = Some(acc.current_phase);
+        }
         acc
+    }
+
+    /// Fold a game's Final record into the accumulator. Cribbage's
+    /// engine does not always emit `EndGame` (see [`Self::ingest`]),
+    /// so the authoritative winner / end-reason source is the log's
+    /// Final record.
+    pub fn supplement_from_final(&mut self, winner: Option<PlayerId>, reason: &EndReason) {
+        if self.winner.is_none() {
+            self.winner = winner;
+        }
+        if self.end_reason.is_none() {
+            self.end_reason = Some(reason.clone());
+        }
     }
 
     fn current_hand_mut(&mut self) -> &mut HandRecord {

@@ -848,7 +848,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 15: `playtest report` subcommand + markdown formatter**
+- [x] **Unit 15: `playtest report` subcommand + markdown formatter**
 
 **Goal:** The user-facing reporter. Takes a games directory, ingests it, runs canned queries, writes a markdown report in <30s for 10K games.
 

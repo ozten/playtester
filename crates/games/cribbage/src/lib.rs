@@ -15,6 +15,7 @@ pub mod hand;
 pub mod metrics;
 pub mod pegging;
 pub mod phase;
+pub mod report;
 pub mod rules;
 pub mod scoring;
 pub mod state;

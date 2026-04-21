@@ -1,12 +1,14 @@
-# Phase 0 benchmarks
+# Phase 0 + 1 benchmarks
 
-The three Phase 0 exit criteria from `playtest-roadmap.md`:
+The exit criteria from `playtest-roadmap.md` tracked here:
 
-- **R0.9** — Can run 10,000 self-play games in under 60 seconds on one core.
+- **R0.9**  — Can run 10,000 self-play games in under 60 seconds on one core.
 - **R0.10** — Every game produces a complete, replayable log.
 - **R0.11** — Zero panics over a 100,000-game soak test.
+- **R1.5** — Per-card design-insight metrics surface on a fixed-deck game.
+- **R1.6** — `playtest report` over 10,000 games completes in under 30 seconds.
 
-All three pass with substantial margin on the current main branch.
+All pass with margin on the current main branch.
 
 ## Reference machine
 
@@ -72,6 +74,55 @@ cargo test --release -p playtest-cli --test soak_100k -- --ignored --nocapture
 ```
 
 Source: `crates/playtest-cli/tests/soak_100k.rs`.
+
+## R1.5 — per-card design-insight signal with random agents
+
+The Phase 1 exit criterion R1.5 calls for the per-card table in the
+report to show meaningful rank-to-rank variance even when both agents
+play randomly — demonstrating that the Phase 1 pipeline produces real
+signal on a fixed-deck game. On a 10,000-game random-vs-random run:
+
+| Metric | Value |
+|---|---|
+| Kept-rate spread across 13 ranks | ≥ 2.0 percentage points (pinned by `per_card_kept_rates_show_rank_to_rank_asymmetry` smoke test) |
+| Representative 5s kept-rate | ~68% |
+| Representative 8s kept-rate | ~61% |
+| Win-rate balance per rank | ~49.5% / ~50.5% (expected for random self-play) |
+
+Reproduce:
+
+```bash
+cargo build --release --bin playtest
+target/release/playtest play --game cribbage --agents random,random \
+    --games 10000 --seed 1 --out /tmp/bench/games/ --fixed-time 0 --parallel
+target/release/playtest report --game cribbage \
+    --games /tmp/bench/games/ --out /tmp/bench/report.md
+```
+
+## R1.6 — report 10,000 games in under 30 seconds
+
+| Metric | Value |
+|---|---|
+| Budget (R1.6) | < 30.0 s |
+| **Measured** | **17.5 s** |
+| Throughput | ~571 games/sec end-to-end (ingest + markdown) |
+| Headroom | ~1.7× under budget |
+| Rows written | 2.33 M `game_metrics` + 20 K `agent_stats` + 10 K `games` |
+
+The 17.5 s total covers SQLite schema init, JSONL parsing + metric
+extraction for 10,000 logs, transaction commit, and the markdown
+report build. `PRAGMA synchronous=OFF` + `journal_mode=MEMORY` +
+a single transaction per batch are the ingestion-side knobs; the
+reporter is dominated by the per-player × per-rank `SUM(value_numeric)`
+queries (13 × 8 × 2 per rank = ~208 scalar queries).
+
+Reproduce: the two commands above (play + report). Measured on the
+reference machine under the release profile.
+
+Source: `crates/playtest-cli/tests/report_smoke.rs` covers the shape;
+the end-to-end timing above is captured here rather than in a test
+because a 30 s budget tied to machine speed is brittle as an
+assertion.
 
 ## Determinism audit
 

@@ -34,7 +34,14 @@ impl MetricRegistry<CribbageGame> for CribbageMetrics {
     }
 
     fn extract(&self, game_id: Uuid, log: &GameLog<CribbageGame>) -> Vec<MetricValue> {
-        let acc = accumulator::Accumulator::ingest(&log.events);
+        let mut acc = accumulator::Accumulator::ingest(&log.events);
+        // Engine only emits `Event::EndGame` on pegging-phase wins —
+        // show-phase and crib-count wins signal game-over through
+        // `state.game_over()` instead. Trust the Final record as the
+        // authoritative winner/end-reason source.
+        if let Some(r) = &log.final_result {
+            acc.supplement_from_final(r.winner, &r.reason);
+        }
         let mut values = Vec::new();
         values.extend(game_shape::extract(game_id, &acc));
         values.extend(scoring::extract(game_id, &acc));
