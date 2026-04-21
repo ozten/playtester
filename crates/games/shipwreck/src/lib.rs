@@ -20,6 +20,7 @@ pub mod card;
 pub mod config;
 pub mod determinize;
 pub mod event;
+pub(crate) mod events;
 pub mod phase;
 pub mod pool;
 pub mod public_view;

@@ -165,8 +165,16 @@ fn apply_action_build_equipment_on_occupied_slot_returns_illegal_action() {
 }
 
 #[test]
-fn apply_action_play_event_card_returns_illegal_action_for_unit_22() {
-    let (game, state) = two_player_initial();
+fn apply_action_play_event_card_without_card_in_hand_is_illegal() {
+    // Unit 23 makes event cards playable when held; if the card is not
+    // in hand the play is rejected (regardless of whether the initial
+    // deal happened to give the seat one).
+    let (game, mut state) = two_player_initial();
+    // Strip every FlyingFish from seat 0's hand so we know the card
+    // is not held.
+    state.players[0]
+        .hand
+        .retain(|c| !matches!(c, Card::Event(playtest_shipwreck::EventCard::FlyingFish)));
     let action = Action::PlayEventCard {
         card: EventCardKind::FlyingFish,
         target: EventTarget::None,

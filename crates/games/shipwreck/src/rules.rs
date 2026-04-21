@@ -1,15 +1,17 @@
 //! `ShipWreckGame` — the top-level [`playtest_core::Game`]
 //! implementation for ShipWreck.
 //!
-//! **Unit 22 scope**: the state machine moves between `Phase::Play`
-//! and `Phase::Finished` only. `Phase::Setup` is ephemeral (consumed
-//! during `initial_state`) and `Phase::ResolvingEvent` is Unit 23
-//! territory.
+//! The state machine moves through
+//! `Setup → Play → [ResolvingEvent]* → Finished`. `Phase::Setup` is
+//! consumed during `initial_state`; `Phase::ResolvingEvent` is
+//! entered on a typhoon play and drained as each remaining resolver
+//! answers with a `ResolveEvent`. Shark and Flying Fish resolve
+//! immediately and never trigger a `Phase::ResolvingEvent` entry.
 //!
-//! **Event-card resolution is deliberately excluded**:
-//! `Action::PlayEventCard` and `Action::ResolveEvent` are never
-//! enumerated by `legal_actions` and are rejected by `apply_action`
-//! with `GameError::IllegalAction`. Unit 23 adds them.
+//! **Event-card resolution (Unit 23)**: `PlayEventCard` and
+//! `ResolveEvent` dispatch into [`crate::events`]. Nested events are
+//! out of scope — during `Phase::ResolvingEvent` only `ResolveEvent`
+//! actions are offered.
 //!
 //! ## Design decisions surfaced here
 //!
@@ -33,16 +35,17 @@
 use playtest_core::{Actor, EndReason, Game, GameError, GameResult, PlayerId};
 use playtest_ports::Rng;
 
-use crate::action::Action;
-use crate::card::{Card, PlayerCardId};
+use crate::action::{Action, EventCardKind, EventResolution, EventTarget};
+use crate::card::{Card, EventCard, PlayerCardId};
 use crate::config::ShipWreckConfig;
-use crate::event::{Event, PlayerScore};
+use crate::event::{Event, EventOutcome, PlayerScore};
+use crate::events::{flying_fish, shark, typhoon};
 use crate::phase::Phase;
 use crate::public_view::{ShipWreckPublicView, public_view as build_public_view};
 use crate::raft::SlotId;
 use crate::resource::{Resource, ResourceCost};
 use crate::setup::build_initial_state;
-use crate::state::{GameState, PlacedPlayerCard};
+use crate::state::{GameState, PendingEvent, PlacedPlayerCard};
 use crate::turns::{
     effective_cost, first_extension_in_hand, has_professor, has_telescope, legal_builds,
     legal_extends, legal_player_placements, legal_wreckage_picks, player_card_in_hand,
@@ -80,6 +83,16 @@ impl Game for ShipWreckGame {
     }
 
     fn next_actor(&self, state: &GameState) -> Actor {
+        // During a multi-player event resolution the actor is dictated
+        // by the front of the queue — not `current_player`, which
+        // stays pinned to the initiator so it can be restored when
+        // the queue drains.
+        if state.phase == Phase::ResolvingEvent
+            && let Some(top) = state.event_resolution_stack.last()
+            && let Some(front) = top.remaining_resolvers.front()
+        {
+            return Actor::Player(*front);
+        }
         // `game_over` short-circuits the loop before this is asked; if
         // the caller still asks, we point at the current player so no
         // panic can propagate.
@@ -87,49 +100,11 @@ impl Game for ShipWreckGame {
     }
 
     fn legal_actions(&self, state: &GameState, player: PlayerId) -> Vec<Action> {
-        if state.phase != Phase::Play {
-            return Vec::new();
+        match state.phase {
+            Phase::Play => legal_play_actions(state, player),
+            Phase::ResolvingEvent => legal_resolution_actions(state, player),
+            Phase::Setup | Phase::Finished => Vec::new(),
         }
-        if state.current_player != player {
-            return Vec::new();
-        }
-
-        let me = &state.players[player as usize];
-        let mut out = Vec::new();
-
-        // 1. ExtendRaft — only if we have an extension card in hand.
-        if first_extension_in_hand(&me.hand).is_some() {
-            out.extend(legal_extends(&me.raft));
-        }
-
-        // 2. PlacePlayerCard.
-        out.extend(legal_player_placements(
-            &me.hand,
-            &me.raft,
-            &me.played_players,
-        ));
-
-        // 3. PickWreckage (own pool + neighbors if Telescope).
-        out.extend(legal_wreckage_picks(
-            player,
-            &state.face_up_pools,
-            has_telescope(me),
-        ));
-
-        // 4. BuildEquipment.
-        let current_kind = state.current_equipment().map(|eq| eq.kind);
-        out.extend(legal_builds(
-            &me.inventory,
-            &me.raft,
-            current_kind,
-            has_professor(me),
-        ));
-
-        // 5. EndTurn — always legal (lets the game progress even when
-        // the current player is stuck).
-        out.push(Action::EndTurn);
-
-        out
     }
 
     fn apply_action(
@@ -138,49 +113,16 @@ impl Game for ShipWreckGame {
         player: PlayerId,
         action: &Action,
     ) -> Result<Vec<Event>, GameError> {
-        if state.phase != Phase::Play {
-            return Err(GameError::IllegalAction {
+        match state.phase {
+            Phase::Play => apply_play_action(state, player, action),
+            Phase::ResolvingEvent => apply_resolution_action(state, player, action),
+            Phase::Setup | Phase::Finished => Err(GameError::IllegalAction {
                 player,
                 message: format!(
-                    "action rejected: phase is {:?}, not Play",
+                    "action rejected: phase is {:?}, not Play/ResolvingEvent",
                     state.phase
                 ),
-            });
-        }
-        if state.current_player != player {
-            return Err(GameError::IllegalAction {
-                player,
-                message: format!(
-                    "action rejected: current_player is {}, not {player}",
-                    state.current_player
-                ),
-            });
-        }
-
-        match action {
-            Action::ExtendRaft { insert_after } => {
-                apply_extend_raft(state, player, *insert_after)
-            }
-            Action::PlacePlayerCard { card, slot } => {
-                apply_place_player_card(state, player, *card, *slot)
-            }
-            Action::PickWreckage {
-                from_pool,
-                card_index,
-            } => apply_pick_wreckage(state, player, *from_pool, *card_index),
-            Action::BuildEquipment {
-                equipment_kind,
-                slot,
-            } => apply_build_equipment(state, player, *equipment_kind, *slot),
-            Action::EndTurn => Ok(apply_end_turn(state, player)),
-            Action::PlayEventCard { .. } | Action::ResolveEvent(_) => {
-                // Unit 23 territory — explicitly reject rather than
-                // silently drop, so Unit 22 tests have a clear signal.
-                Err(GameError::IllegalAction {
-                    player,
-                    message: "event-card actions are not available in Unit 22".into(),
-                })
-            }
+            }),
         }
     }
 
@@ -236,6 +178,376 @@ impl Game for ShipWreckGame {
         // on the next turn boundary via the `EndTurn` path. We
         // return the result directly so the GameLoop halts.
         Some(build_game_result(state))
+    }
+}
+
+// ---------- phase dispatch ----------------------------------------------
+
+fn legal_play_actions(state: &GameState, player: PlayerId) -> Vec<Action> {
+    if state.current_player != player {
+        return Vec::new();
+    }
+
+    let me = &state.players[player as usize];
+    let mut out = Vec::new();
+
+    // 1. ExtendRaft — only if we have an extension card in hand.
+    if first_extension_in_hand(&me.hand).is_some() {
+        out.extend(legal_extends(&me.raft));
+    }
+
+    // 2. PlacePlayerCard.
+    out.extend(legal_player_placements(
+        &me.hand,
+        &me.raft,
+        &me.played_players,
+    ));
+
+    // 3. PickWreckage (own pool + neighbors if Telescope).
+    out.extend(legal_wreckage_picks(
+        player,
+        &state.face_up_pools,
+        has_telescope(me),
+    ));
+
+    // 4. BuildEquipment.
+    let current_kind = state.current_equipment().map(|eq| eq.kind);
+    out.extend(legal_builds(
+        &me.inventory,
+        &me.raft,
+        current_kind,
+        has_professor(me),
+    ));
+
+    // 5. PlayEventCard — one entry per (card-in-hand × legal target).
+    out.extend(legal_event_card_plays(state, player));
+
+    // 6. EndTurn — always legal.
+    out.push(Action::EndTurn);
+
+    out
+}
+
+fn legal_resolution_actions(state: &GameState, player: PlayerId) -> Vec<Action> {
+    let Some(top) = state.event_resolution_stack.last() else {
+        return Vec::new();
+    };
+    let Some(&front) = top.remaining_resolvers.front() else {
+        return Vec::new();
+    };
+    if front != player {
+        return Vec::new();
+    }
+    // Only typhoon today; future multi-step events dispatch here too.
+    let me = &state.players[player as usize];
+    typhoon::legal_typhoon_resolutions(me)
+        .into_iter()
+        .map(Action::ResolveEvent)
+        .collect()
+}
+
+/// Enumerate `PlayEventCard` actions for each event card the current
+/// player holds. Shark plays are expanded to one action per legal
+/// opponent × target slot; Typhoon/FlyingFish produce a single
+/// targetless action each.
+fn legal_event_card_plays(state: &GameState, player: PlayerId) -> Vec<Action> {
+    let me = &state.players[player as usize];
+    let mut out = Vec::new();
+    let mut shark_present = false;
+    let mut typhoon_present = false;
+    let mut flying_fish_present = false;
+    for c in &me.hand {
+        if let Card::Event(ev) = c {
+            match ev {
+                EventCard::Shark => shark_present = true,
+                EventCard::Typhoon => typhoon_present = true,
+                EventCard::FlyingFish => flying_fish_present = true,
+            }
+        }
+    }
+    if shark_present {
+        for target in shark::all_legal_shark_targets(player, state) {
+            out.push(Action::PlayEventCard {
+                card: EventCardKind::Shark,
+                target,
+            });
+        }
+    }
+    if typhoon_present {
+        out.push(Action::PlayEventCard {
+            card: EventCardKind::Typhoon,
+            target: EventTarget::None,
+        });
+    }
+    if flying_fish_present {
+        out.push(Action::PlayEventCard {
+            card: EventCardKind::FlyingFish,
+            target: EventTarget::None,
+        });
+    }
+    out
+}
+
+fn apply_play_action(
+    state: &GameState,
+    player: PlayerId,
+    action: &Action,
+) -> Result<Vec<Event>, GameError> {
+    if state.current_player != player {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!(
+                "action rejected: current_player is {}, not {player}",
+                state.current_player
+            ),
+        });
+    }
+
+    match action {
+        Action::ExtendRaft { insert_after } => {
+            apply_extend_raft(state, player, *insert_after)
+        }
+        Action::PlacePlayerCard { card, slot } => {
+            apply_place_player_card(state, player, *card, *slot)
+        }
+        Action::PickWreckage {
+            from_pool,
+            card_index,
+        } => apply_pick_wreckage(state, player, *from_pool, *card_index),
+        Action::BuildEquipment {
+            equipment_kind,
+            slot,
+        } => apply_build_equipment(state, player, *equipment_kind, *slot),
+        Action::EndTurn => Ok(apply_end_turn(state, player)),
+        Action::PlayEventCard { card, target } => {
+            apply_play_event_card(state, player, *card, *target)
+        }
+        Action::ResolveEvent(_) => Err(GameError::IllegalAction {
+            player,
+            message: "ResolveEvent is only legal during Phase::ResolvingEvent".into(),
+        }),
+    }
+}
+
+fn apply_resolution_action(
+    state: &GameState,
+    player: PlayerId,
+    action: &Action,
+) -> Result<Vec<Event>, GameError> {
+    let top = state.event_resolution_stack.last().ok_or_else(|| {
+        GameError::IllegalAction {
+            player,
+            message: "ResolvingEvent phase with empty resolution stack".into(),
+        }
+    })?;
+    let front = top.remaining_resolvers.front().copied().ok_or_else(|| {
+        GameError::IllegalAction {
+            player,
+            message: "ResolvingEvent phase with empty resolver queue".into(),
+        }
+    })?;
+    if front != player {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("not your turn to resolve — waiting on {front}"),
+        });
+    }
+    match action {
+        Action::ResolveEvent(resolution) => {
+            apply_resolve_event(state, player, *resolution)
+        }
+        _ => Err(GameError::IllegalAction {
+            player,
+            message: "only ResolveEvent actions are legal during event resolution"
+                .into(),
+        }),
+    }
+}
+
+fn apply_play_event_card(
+    state: &GameState,
+    player: PlayerId,
+    card: EventCardKind,
+    target: EventTarget,
+) -> Result<Vec<Event>, GameError> {
+    let me = &state.players[player as usize];
+    // Confirm the card is actually in hand.
+    let held = me.hand.iter().any(|c| matches!(c, Card::Event(ev) if event_card_kind(*ev) == card));
+    if !held {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("event card {card:?} not in hand"),
+        });
+    }
+
+    match card {
+        EventCardKind::Shark => {
+            // Target must be a SingleSlot and appear in the legal set.
+            let EventTarget::SingleSlot {
+                player: tp,
+                slot: ts,
+            } = target
+            else {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: "Shark requires a SingleSlot target".into(),
+                });
+            };
+            if tp == player {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: "Shark cannot target the caster".into(),
+                });
+            }
+            if usize::from(tp) >= state.players.len() {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: format!("unknown target player {tp}"),
+                });
+            }
+            let target_state = &state.players[tp as usize];
+            let legal =
+                shark::legal_shark_targets_against(player, tp, target_state);
+            let requested = EventTarget::SingleSlot {
+                player: tp,
+                slot: ts,
+            };
+            if !legal.contains(&requested) {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: format!(
+                        "slot {ts:?} on player {tp} is not a legal shark target"
+                    ),
+                });
+            }
+            Ok(shark::apply_shark(state, player, requested))
+        }
+        EventCardKind::Typhoon => {
+            if !matches!(target, EventTarget::None) {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: "Typhoon takes no target".into(),
+                });
+            }
+            Ok(typhoon::apply_typhoon(player))
+        }
+        EventCardKind::FlyingFish => {
+            if !matches!(target, EventTarget::None) {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: "FlyingFish takes no target".into(),
+                });
+            }
+            Ok(flying_fish::apply_flying_fish(state, player))
+        }
+    }
+}
+
+fn apply_resolve_event(
+    state: &GameState,
+    player: PlayerId,
+    resolution: EventResolution,
+) -> Result<Vec<Event>, GameError> {
+    // We know from `apply_resolution_action` that this player is the
+    // front of the resolver queue. Validate the resolution legality
+    // against the player's current raft.
+    let me = &state.players[player as usize];
+    match resolution {
+        EventResolution::TyphoonLose(slot) => {
+            if matches!(slot, SlotId::BaseLeft | SlotId::BaseRight) {
+                // Base slots are only losable if they carry an upgrade;
+                // either way `is_legal_typhoon_slot` is the source of
+                // truth.
+            }
+            if !typhoon::is_legal_typhoon_slot(me, slot) {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: format!(
+                        "slot {slot:?} is not a legal typhoon sacrifice"
+                    ),
+                });
+            }
+        }
+        EventResolution::TyphoonPass => {
+            // Pass is only legal when the player has *no* losable
+            // slot; otherwise they must sacrifice something.
+            let has_losable = !me.raft.extensions.is_empty()
+                || me.raft.upgrade_at(SlotId::BaseLeft).is_some()
+                || me.raft.upgrade_at(SlotId::BaseRight).is_some();
+            if has_losable {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: "TyphoonPass is only legal when the player has nothing to lose"
+                        .into(),
+                });
+            }
+        }
+    }
+    Ok(typhoon::apply_typhoon_resolution(player, resolution))
+}
+
+/// Convert an [`EventCard`] to an [`EventCardKind`]. One-to-one, so
+/// we can drop the match into legal-actions and apply-action
+/// enumeration without duplicating it.
+fn event_card_kind(c: EventCard) -> EventCardKind {
+    match c {
+        EventCard::Shark => EventCardKind::Shark,
+        EventCard::Typhoon => EventCardKind::Typhoon,
+        EventCard::FlyingFish => EventCardKind::FlyingFish,
+    }
+}
+
+// ---------- apply_event helpers (event-card resolution) -----------------
+
+fn apply_event_card_played(
+    state: &mut GameState,
+    player: PlayerId,
+    card: EventCardKind,
+) {
+    let me = &mut state.players[player as usize];
+    match card {
+        EventCardKind::Shark => {
+            if shark::discard_shark_from_hand(me) {
+                state.discarded_event_cards.push(EventCard::Shark);
+            }
+        }
+        EventCardKind::Typhoon => {
+            if typhoon::discard_typhoon_from_hand(me) {
+                state.discarded_event_cards.push(EventCard::Typhoon);
+            }
+            // Enter Phase::ResolvingEvent with the typhoon queue
+            // seeded in initiator-first turn order.
+            let n = u8::try_from(state.players.len())
+                .expect("player count fits in u8");
+            let queue = typhoon::typhoon_resolver_order(player, n);
+            state
+                .event_resolution_stack
+                .push(PendingEvent::typhoon(queue, player));
+            state.phase = Phase::ResolvingEvent;
+        }
+        EventCardKind::FlyingFish => {
+            if flying_fish::discard_flying_fish_from_hand(me) {
+                state.discarded_event_cards.push(EventCard::FlyingFish);
+            }
+        }
+    }
+}
+
+fn apply_event_resolved(
+    state: &mut GameState,
+    _player: PlayerId,
+    outcome: EventOutcome,
+) {
+    match outcome {
+        EventOutcome::SharkDefended { .. } | EventOutcome::SharkDestroyed { .. } => {
+            shark::apply_shark_resolution(state, outcome);
+        }
+        EventOutcome::TyphoonLost { .. } | EventOutcome::TyphoonPass { .. } => {
+            typhoon::apply_typhoon_resolution_event(state, outcome);
+        }
+        EventOutcome::FlyingFishGranted { player } => {
+            flying_fish::apply_flying_fish_resolution(state, player);
+        }
     }
 }
 
@@ -576,8 +888,15 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
             let idx = resource.index();
             inv[idx] = inv[idx].saturating_sub(*amount);
         }
-        Event::EventCardPlayed { .. } | Event::EventResolved { .. } => {
-            unimplemented!("Unit 23: event-card resolution");
+        Event::EventCardPlayed {
+            player,
+            card,
+            target: _,
+        } => {
+            apply_event_card_played(state, *player, *card);
+        }
+        Event::EventResolved { player, outcome } => {
+            apply_event_resolved(state, *player, *outcome);
         }
         Event::FoodConsumed {
             player,

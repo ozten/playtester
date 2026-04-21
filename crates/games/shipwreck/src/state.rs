@@ -21,7 +21,7 @@ use std::collections::VecDeque;
 use playtest_core::PlayerId;
 use serde::{Deserialize, Serialize};
 
-use crate::card::{Card, EquipmentCard, PlayerCard};
+use crate::card::{Card, EquipmentCard, EventCard, PlayerCard};
 use crate::config::ShipWreckConfig;
 use crate::phase::Phase;
 use crate::raft::{Raft, SlotId};
@@ -45,18 +45,24 @@ pub enum PendingEventKind {
 pub struct PendingEvent {
     pub kind: PendingEventKind,
     pub remaining_resolvers: VecDeque<PlayerId>,
+    /// Seat that played the event card. When the pending event pops,
+    /// `current_player` is restored to this value so normal turn-taking
+    /// continues from the caster's turn.
+    pub initiator: PlayerId,
 }
 
 impl PendingEvent {
     /// Construct a pending typhoon resolution, listing the players who
-    /// must still respond (turn order — usually everyone except the
-    /// caster; spec leaves whether the caster is included somewhat
-    /// ambiguous, resolved in Unit 23).
+    /// must still respond (Unit 23 resolves this as "every seat,
+    /// starting with the initiator, in turn order"; `initiator` is
+    /// preserved so `current_player` can be restored when the queue
+    /// drains).
     #[must_use]
-    pub fn typhoon(remaining: VecDeque<PlayerId>) -> Self {
+    pub fn typhoon(remaining: VecDeque<PlayerId>, initiator: PlayerId) -> Self {
         Self {
             kind: PendingEventKind::Typhoon,
             remaining_resolvers: remaining,
+            initiator,
         }
     }
 }
@@ -146,6 +152,16 @@ pub struct GameState {
     /// Stack of multi-step event resolutions in progress. Empty
     /// during normal play.
     pub event_resolution_stack: Vec<PendingEvent>,
+    /// Event cards that have been played and consumed. Carried on
+    /// state (rather than a per-player field) because once played an
+    /// event card belongs to no one — it's simply out of the deck.
+    /// This is public: every event-card play emits `EventCardPlayed`,
+    /// so observers can reconstruct this list from the log.
+    ///
+    /// Determinize reads this to subtract consumed event cards from
+    /// the "universe" when resampling opponent hands — otherwise a
+    /// played-and-discarded event card would be falsely redealt.
+    pub discarded_event_cards: Vec<EventCard>,
 }
 
 impl GameState {
@@ -170,6 +186,7 @@ impl GameState {
             current_player: 0,
             phase: Phase::Setup,
             event_resolution_stack: Vec::new(),
+            discarded_event_cards: Vec::new(),
         }
     }
 

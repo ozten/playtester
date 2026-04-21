@@ -160,6 +160,12 @@ pub(crate) fn determinize(
             }
         }
     }
+    // Played-and-discarded event cards: public (each `EventCardPlayed`
+    // event names the card). Subtract them from the universe so
+    // they're not incorrectly redealt into opponent hands.
+    for ev in &state.discarded_event_cards {
+        bump(&mut seen, Card::Event(*ev));
+    }
     // Remaining face-down wreckage deck: treated as private. In Unit
     // 22 this is always empty after setup, but we leave the slot in
     // the unknown pool for forward compatibility.

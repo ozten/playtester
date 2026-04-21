@@ -33,7 +33,7 @@
 use playtest_core::PlayerId;
 use serde::{Deserialize, Serialize};
 
-use crate::card::{Card, EquipmentCard};
+use crate::card::{Card, EquipmentCard, EventCard};
 use crate::phase::Phase;
 use crate::raft::Raft;
 use crate::state::{GameState, PendingEvent, PlacedPlayerCard};
@@ -84,6 +84,10 @@ pub struct ShipWreckPublicView {
     /// setup this is always zero — no mid-game redeal in Unit 22 — but
     /// carrying the count keeps the view forward-compatible.
     pub wreckage_deck_size: usize,
+    /// Event cards that have been played and consumed this game (in
+    /// play order). Public because every play emits an
+    /// `EventCardPlayed` log record.
+    pub discarded_event_cards: Vec<EventCard>,
 }
 
 /// Build the public view for `observer` from `state`.
@@ -131,5 +135,6 @@ pub fn public_view(state: &GameState, observer: PlayerId) -> ShipWreckPublicView
         equipment_deck_remaining: state.equipment_deck.len(),
         event_resolution_stack: state.event_resolution_stack.clone(),
         wreckage_deck_size: state.wreckage_deck.len(),
+        discarded_event_cards: state.discarded_event_cards.clone(),
     }
 }
