@@ -1,7 +1,7 @@
 ---
 title: "feat: Web spine (SSE) + ShipWreck multi-game proof + Phase 2 heuristics/ISMCTS"
 type: feat
-status: active
+status: shipped
 date: 2026-04-21
 origin: docs/plans/2026-04-21-001-feat-playtester-phases-0-1-plan.md
 supersedes_section: "Phase 8 (Interactive designer loop) → web frontend decision"
@@ -380,7 +380,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ### Web spine (Units 16–18)
 
-- [ ] **Unit 16: `playtest-api` crate — wire types and versioned envelope**
+- [x] **Unit 16: `playtest-api` crate — wire types and versioned envelope**
 
 **Goal:** Define every request, response, and SSE frame type the SvelteKit frontend will consume. Zero runtime dependencies on axum, tokio, or any engine code — just `serde` and `serde_json`.
 
@@ -421,7 +421,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ---
 
-- [ ] **Unit 17: `playtest-server` crate — axum router, broadcast fan-out, run supervisor**
+- [x] **Unit 17: `playtest-server` crate — axum router, broadcast fan-out, run supervisor**
 
 **Goal:** HTTP server that exposes every endpoint in the wire contract, runs games through the same `GameLoop` the CLI uses, and streams events to SSE subscribers in real time.
 
@@ -480,7 +480,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ---
 
-- [ ] **Unit 18: Wire-contract docs + OpenAPI dump + SvelteKit handoff**
+- [x] **Unit 18: Wire-contract docs + OpenAPI dump + SvelteKit handoff**
 
 **Goal:** Produce the artifacts the SvelteKit frontend repo needs to build against this server without reading Rust source.
 
@@ -515,7 +515,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ### `Game` trait extension (Unit 19)
 
-- [ ] **Unit 19: `Game::determinize` trait method + test-game + Cribbage impl**
+- [x] **Unit 19: `Game::determinize` trait method + test-game + Cribbage impl**
 
 **Goal:** Add the one new `Game` method ISMCTS will need, with its invariant documented and the existing Cribbage + in-repo test impls brought along. Lands *before* ShipWreck so ShipWreck's `Game` impl includes determinize from day one, not as a retrofit.
 
@@ -558,7 +558,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ### Multi-game proof: ShipWreck (Units 20–23)
 
-- [ ] **Unit 20: ShipWreck primitives — cards, static pools, raft structure**
+- [x] **Unit 20: ShipWreck primitives — cards, static pools, raft structure**
 
 **Goal:** The atomic building blocks for ShipWreck. Implemented first and exhaustively tested, because every other ShipWreck unit depends on these.
 
@@ -599,7 +599,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ---
 
-- [ ] **Unit 21: ShipWreck state, setup, action, and event types**
+- [x] **Unit 21: ShipWreck state, setup, action, and event types**
 
 **Goal:** Define the full state machine — `GameState`, per-player state, `Action` enum, `Event` enum, setup phase. Does not yet implement turn-taking or action resolution (those land in Unit 22).
 
@@ -637,7 +637,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ---
 
-- [ ] **Unit 22: ShipWreck turn flow — legal actions, apply_action, apply_event, determinize**
+- [x] **Unit 22: ShipWreck turn flow — legal actions, apply_action, apply_event, determinize**
 
 **Goal:** The core `Game` trait impl minus event-card resolution. A random-action game terminates and produces a sensible log. ShipWreck's `determinize` (added to `Game` in Unit 19) is implemented here as part of the `impl Game for ShipWreckGame` block — ShipWreck's hidden-info shape (opponent hands + deck order) is shallow enough to co-locate with the rest of the rules. This unit is where the `Game` trait is stress-tested for structural differences vs. Cribbage — if anything needs to change in `playtest-core`, it surfaces here.
 
@@ -685,7 +685,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ---
 
-- [ ] **Unit 23: ShipWreck event-card resolution — shark, typhoon, flying fish**
+- [x] **Unit 23: ShipWreck event-card resolution — shark, typhoon, flying fish**
 
 **Goal:** Full event-card semantics. Event cards are the most complex ShipWreck mechanic (targeting, multi-player decisions) and are the true stress test of the `apply_action`/`apply_event` split.
 
@@ -727,7 +727,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ---
 
-- [ ] **Unit 24: ShipWreck scoring, metrics, CLI integration, soak validation**
+- [x] **Unit 24: ShipWreck scoring, metrics, CLI integration, soak validation**
 
 **Goal:** Full integration — ShipWreck's `MetricRegistry` impl, CLI registry entry, end-to-end `playtest play --game shipwreck` working, and 10K-game random-vs-random soak run completes cleanly.
 
@@ -770,7 +770,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ### Phase 2 — Heuristic agents + ISMCTS (Units 25–27)
 
-- [ ] **Unit 25: Evaluation functions, `GreedyAgent`, `HeuristicAgent`**
+- [x] **Unit 25: Evaluation functions, `GreedyAgent`, `HeuristicAgent`**
 
 **Goal:** Game-provided evaluation functions and two agents that use them. `HeuristicAgent` for Cribbage and ShipWreck hits the R2.2 quality bar (beats random >90%).
 
@@ -816,7 +816,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ---
 
-- [ ] **Unit 26: `ISMCTSAgent` — generic Information-Set MCTS with determinization**
+- [x] **Unit 26: `ISMCTSAgent` — generic Information-Set MCTS with determinization**
 
 **Goal:** A single generic ISMCTS implementation that works for any `Game` implementing `determinize`. Plugs into Cribbage and ShipWreck without any game-specific code.
 
@@ -860,7 +860,7 @@ Client                   playtest-server           broadcaster           engine 
 
 ---
 
-- [ ] **Unit 27: `playtest matchup` subcommand + Phase 2 exit validation**
+- [x] **Unit 27: `playtest matchup` subcommand + Phase 2 exit validation**
 
 **Goal:** Operator-facing tooling to produce matchup matrices, plus the benchmark run that validates R2.4.
 
