@@ -11,9 +11,11 @@ workspace = true
 
 [dependencies]
 playtest-core.workspace = true
+playtest-metrics.workspace = true
 playtest-ports.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 playtest-adapters.workspace = true

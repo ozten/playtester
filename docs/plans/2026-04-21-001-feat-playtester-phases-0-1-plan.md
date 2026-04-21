@@ -708,7 +708,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 12b: Log schema bump — `finished_at` + `wall_clock_ms`**
+- [x] **Unit 12b: Log schema bump — `finished_at` + `wall_clock_ms`**
 
 **Goal:** Close the gap left by Unit 12: `wall_clock_ms` was listed as a built-in metric but skipped because the Final record has no end timestamp. This unit extends the log schema and wires the built-in metric through. Lands before Unit 13 so the Cribbage fixtures committed in Unit 13 are already in schema v2.
 
@@ -745,7 +745,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 13: Cribbage-specific metrics**
+- [x] **Unit 13: Cribbage-specific metrics**
 
 **Goal:** Define and implement the metrics that only make sense for Cribbage, including the reframed per-card design-insight metrics (R1.5) that replace the roadmap's CCG-shaped "per-card" metrics for a fixed-deck game.
 

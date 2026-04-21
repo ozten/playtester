@@ -514,12 +514,14 @@ dependencies = [
  "playtest-agents",
  "playtest-core",
  "playtest-log",
+ "playtest-metrics",
  "playtest-ports",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
