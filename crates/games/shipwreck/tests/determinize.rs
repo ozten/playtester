@@ -62,7 +62,11 @@ async fn mid_game_state(
                     break;
                 }
                 let view = game.public_view(loop_.state(), p);
-                let choice = agents[p as usize].choose(&view, &legal).await.unwrap();
+                let st_ref = loop_.state().clone();
+                let choice = agents[p as usize]
+                    .choose(&view, &legal, &st_ref)
+                    .await
+                    .unwrap();
                 let events = game.apply_action(loop_.state(), p, &legal[choice]).unwrap();
                 for e in &events {
                     // emit via sink (ignored contents) + fold into state.

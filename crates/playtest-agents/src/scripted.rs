@@ -61,6 +61,7 @@ where
         &mut self,
         view: &G::PublicView,
         legal: &[G::Action],
+        _state: &G::State,
     ) -> Result<usize, AgentError> {
         if legal.is_empty() {
             return Err(AgentError::Other(

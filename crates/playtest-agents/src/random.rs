@@ -55,6 +55,7 @@ where
         &mut self,
         _view: &G::PublicView,
         legal: &[G::Action],
+        _state: &G::State,
     ) -> Result<usize, AgentError> {
         let n = u64::try_from(legal.len()).map_err(|_| {
             AgentError::Other(format!(

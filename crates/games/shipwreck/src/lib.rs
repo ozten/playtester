@@ -21,6 +21,7 @@ pub mod config;
 pub mod determinize;
 pub mod event;
 pub(crate) mod events;
+pub mod heuristic;
 pub mod metrics;
 pub mod phase;
 pub mod pool;
@@ -43,6 +44,7 @@ pub use card::{
 };
 pub use config::{ConfigError, MAX_PLAYERS, MIN_PLAYERS, ShipWreckConfig};
 pub use event::{Event, EventOutcome, PlayerScore, TieBreakerUsed};
+pub use heuristic::shipwreck_eval;
 pub use phase::Phase;
 pub use pool::{
     DEFAULT_FLYING_FISH_COUNT, DEFAULT_SHARK_COUNT, DEFAULT_TYPHOON_COUNT, ITEM_COUNT_PER_RESOURCE,

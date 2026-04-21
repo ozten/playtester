@@ -58,7 +58,7 @@ async fn priority_prefers_first_action_returns_index_zero() {
         -i32::try_from(a.0).unwrap_or(0)
     });
     let legal = vec![Tag(0), Tag(1), Tag(2)];
-    assert_eq!(agent.choose(&(), &legal).await.unwrap(), 0);
+    assert_eq!(agent.choose(&(), &legal, &()).await.unwrap(), 0);
 }
 
 #[tokio::test]
@@ -68,20 +68,20 @@ async fn priority_prefers_last_action_returns_index_n_minus_one() {
         i32::try_from(a.0).unwrap_or(0)
     });
     let legal = vec![Tag(0), Tag(1), Tag(2), Tag(10)];
-    assert_eq!(agent.choose(&(), &legal).await.unwrap(), 3);
+    assert_eq!(agent.choose(&(), &legal, &()).await.unwrap(), 3);
 }
 
 #[tokio::test]
 async fn tie_break_picks_lowest_index() {
     let mut agent: ScriptedAgent<NullGame, _> = ScriptedAgent::new(|(): &(), _a: &Tag| 0);
     let legal = vec![Tag(5), Tag(5), Tag(5), Tag(5)];
-    assert_eq!(agent.choose(&(), &legal).await.unwrap(), 0);
+    assert_eq!(agent.choose(&(), &legal, &()).await.unwrap(), 0);
 }
 
 #[tokio::test]
 async fn empty_legal_slice_returns_agent_error() {
     let mut agent: ScriptedAgent<NullGame, _> = ScriptedAgent::new(|(): &(), _a: &Tag| 0);
-    let err = agent.choose(&(), &[]).await.unwrap_err();
+    let err = agent.choose(&(), &[], &()).await.unwrap_err();
     assert!(matches!(err, AgentError::Other(_)));
 }
 
@@ -246,7 +246,7 @@ async fn random_agent_with_playback_rng_reproduces_choices_exactly() {
         let mut agent: RandomAgent<NullGame, _> = RandomAgent::new(record);
         let mut out = Vec::with_capacity(40);
         for _ in 0..40 {
-            out.push(agent.choose(&(), &legal).await.unwrap());
+            out.push(agent.choose(&(), &legal, &()).await.unwrap());
         }
         let mut rec = agent.into_rng();
         rec.flush().unwrap();
@@ -259,7 +259,7 @@ async fn random_agent_with_playback_rng_reproduces_choices_exactly() {
         let mut agent: RandomAgent<NullGame, _> = RandomAgent::new(playback);
         let mut out = Vec::with_capacity(40);
         for _ in 0..40 {
-            out.push(agent.choose(&(), &legal).await.unwrap());
+            out.push(agent.choose(&(), &legal, &()).await.unwrap());
         }
         out
     };

@@ -15,7 +15,7 @@ use playtest_log::{EventLogWriter, LogHeader, LogRecord, SCHEMA_VERSION, compute
 use playtest_ports::{Clock, GameEventSink};
 use playtest_shipwreck::{Event as ShipWreckEvent, ShipWreckConfig, ShipWreckGame};
 
-use crate::agent_registry::build_agent;
+use crate::agent_registry::{build_cribbage_agent, build_shipwreck_agent};
 use crate::game_registry::RegisteredGame;
 
 /// Run one game, writing every log line (header + events + final) to
@@ -60,7 +60,8 @@ fn run_cribbage_into_sink(
             let mix = 0x9E37_79B9_7F4A_7C15u64
                 .wrapping_mul(u64::try_from(i + 1).expect("small i"));
             let agent_seed = seed ^ mix;
-            build_agent::<CribbageGame>(name, agent_seed)
+            let player = u8::try_from(i).expect("player index fits in u8");
+            build_cribbage_agent(name, agent_seed, player)
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -136,7 +137,8 @@ fn run_shipwreck_into_sink(
             let mix = 0x9E37_79B9_7F4A_7C15u64
                 .wrapping_mul(u64::try_from(i + 1).expect("small i"));
             let agent_seed = seed ^ mix;
-            build_agent::<ShipWreckGame>(name, agent_seed)
+            let player = u8::try_from(i).expect("player index fits in u8");
+            build_shipwreck_agent(name, agent_seed, player)
         })
         .collect::<Result<Vec<_>>>()?;
 

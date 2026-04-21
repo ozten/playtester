@@ -98,7 +98,7 @@ impl<'a, G: Game> GameLoop<'a, G> {
                             })?;
 
                     let choice = agent
-                        .choose(&view, &legal)
+                        .choose(&view, &legal, &self.state)
                         .await
                         .map_err(|source| GameError::AgentFailed { player: p, source })?;
 

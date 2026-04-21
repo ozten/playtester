@@ -55,7 +55,7 @@ async fn choose_returns_index_in_range() {
     let mut agent: RandomAgent<NullGame, _> = RandomAgent::new(StubRng::seeded(42));
     let actions = legal(4);
     for _ in 0..64 {
-        let idx = agent.choose(&(), &actions).await.unwrap();
+        let idx = agent.choose(&(), &actions, &()).await.unwrap();
         assert!(idx < 4, "RandomAgent returned out-of-range index {idx}");
     }
 }
@@ -66,8 +66,8 @@ async fn identical_seeds_produce_identical_choice_sequences() {
     let mut b: RandomAgent<NullGame, _> = RandomAgent::new(StubRng::seeded(2026));
     let actions = legal(7);
     for _ in 0..128 {
-        let ia = a.choose(&(), &actions).await.unwrap();
-        let ib = b.choose(&(), &actions).await.unwrap();
+        let ia = a.choose(&(), &actions, &()).await.unwrap();
+        let ib = b.choose(&(), &actions, &()).await.unwrap();
         assert_eq!(ia, ib, "identical seeds diverged");
     }
 }
@@ -82,7 +82,7 @@ async fn uniform_distribution_over_10k_draws() {
 
     let mut counts = [0u32; 3];
     for _ in 0..10_000 {
-        let idx = agent.choose(&(), &actions).await.unwrap();
+        let idx = agent.choose(&(), &actions, &()).await.unwrap();
         counts[idx] += 1;
     }
 
@@ -102,7 +102,7 @@ async fn uniform_distribution_over_10k_draws() {
 #[tokio::test]
 async fn empty_legal_slice_returns_agent_error() {
     let mut agent: RandomAgent<NullGame, _> = RandomAgent::new(StubRng::seeded(1));
-    let err = agent.choose(&(), &[]).await.unwrap_err();
+    let err = agent.choose(&(), &[], &()).await.unwrap_err();
     assert!(matches!(err, AgentError::Other(_)));
 }
 
@@ -129,6 +129,6 @@ impl _ConstraintProof for AlwaysInvalidRng {}
 async fn rng_port_error_is_surfaced_as_agent_error() {
     let mut agent: RandomAgent<NullGame, _> = RandomAgent::new(AlwaysInvalidRng);
     let actions = legal(3);
-    let err = agent.choose(&(), &actions).await.unwrap_err();
+    let err = agent.choose(&(), &actions, &()).await.unwrap_err();
     assert!(matches!(err, AgentError::Other(_)));
 }

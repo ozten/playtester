@@ -143,11 +143,13 @@ impl<G: Game + ?Sized> Agent<G> for FixedChoice
 where
     G::PublicView: Send + Sync,
     G::Action: Send + Sync,
+    G::State: Send + Sync,
 {
     async fn choose(
         &mut self,
         _view: &G::PublicView,
         _legal: &[G::Action],
+        _state: &G::State,
     ) -> Result<usize, AgentError> {
         Ok(self.0)
     }
@@ -160,11 +162,13 @@ impl<G: Game + ?Sized> Agent<G> for OutOfBounds
 where
     G::PublicView: Send + Sync,
     G::Action: Send + Sync,
+    G::State: Send + Sync,
 {
     async fn choose(
         &mut self,
         _view: &G::PublicView,
         legal: &[G::Action],
+        _state: &G::State,
     ) -> Result<usize, AgentError> {
         Ok(legal.len() + 5)
     }
@@ -177,11 +181,13 @@ impl<G: Game + ?Sized> Agent<G> for AlwaysFails
 where
     G::PublicView: Send + Sync,
     G::Action: Send + Sync,
+    G::State: Send + Sync,
 {
     async fn choose(
         &mut self,
         _view: &G::PublicView,
         _legal: &[G::Action],
+        _state: &G::State,
     ) -> Result<usize, AgentError> {
         Err(AgentError::Other("simulated agent failure".into()))
     }
