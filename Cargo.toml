@@ -5,6 +5,7 @@ members = [
     "crates/playtest-ports",
     "crates/playtest-adapters",
     "crates/playtest-agents",
+    "crates/playtest-api",
     "crates/playtest-log",
     "crates/playtest-metrics",
     "crates/playtest-cli",
@@ -36,6 +37,7 @@ rand = "0.9"
 rand_chacha = "0.9"
 rayon = "1.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
+schemars = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
@@ -48,6 +50,7 @@ playtest-core = { path = "crates/playtest-core" }
 playtest-ports = { path = "crates/playtest-ports" }
 playtest-adapters = { path = "crates/playtest-adapters" }
 playtest-agents = { path = "crates/playtest-agents" }
+playtest-api = { path = "crates/playtest-api" }
 playtest-log = { path = "crates/playtest-log" }
 playtest-metrics = { path = "crates/playtest-metrics" }
 playtest-cribbage = { path = "crates/games/cribbage" }
