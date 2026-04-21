@@ -4,6 +4,7 @@ type: feat
 status: active
 date: 2026-04-21
 origin: playtest-roadmap.md
+last_reconciled: 2026-04-21
 ---
 
 # feat: Playtester engine foundations + analytics spine (Cribbage, Rust)
@@ -78,7 +79,15 @@ Mapped from `playtest-roadmap.md` (origin) and the user's architectural constrai
 
 ### Relevant Code and Patterns
 
-The repository is greenfield: only `playtest-roadmap.md` exists today. No existing Rust code, no workspace, no prior conventions. All architectural decisions in this plan are load-bearing for everything that follows.
+After Units 1 & 2 shipped, the baseline is:
+
+- **8-crate Cargo workspace** under `crates/` with `playtest-cribbage` at `crates/games/cribbage/`. Rust edition 2024, toolchain pinned to stable, MSRV 1.95, `resolver = "3"`. Workspace-level `clippy::pedantic` + `clippy::all` at `warn`, with targeted allows (`module_name_repetitions`, `missing_errors_doc`, `missing_panics_doc`, `doc_markdown`). `unsafe_code = "forbid"` across the workspace.
+- **Five port traits** in `crates/playtest-ports/src/` (`clock.rs`, `rng.rs`, `filesystem.rs`, `game_event_sink.rs`, `llm_client.rs`), object-safe except `LlmClient` (async_trait). Each has its own `thiserror` error enum; none panic on caller bugs.
+- **Compile-time object-safety guard** in `crates/playtest-ports/tests/traits_object_safe.rs` — any regression breaks CI.
+- **Three-categories-of-recording doc** in `crates/playtest-ports/src/lib.rs` — the canonical place readers learn the distinction between port I/O tapes, operator logs, and the game event log.
+- **CI workflow** at `.github/workflows/ci.yml` runs `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` on push + PR.
+
+All later-unit code should follow these conventions (port traits return `Result`; workspace-level clippy pedantic; `unsafe_code = "forbid"`; prefer generics over `&dyn Trait` for `LlmClient`).
 
 ### Institutional Learnings
 
@@ -100,6 +109,9 @@ None yet (`docs/solutions/` does not exist). This plan will likely be the first 
 - **Snapshot = replay.** State snapshot at tick `N` is produced by applying events `0..N` to `initial_state(seed)`. No separate snapshot serialization to keep in sync. Rationale: single source of truth. Trade-off: replay cost grows with game length — acceptable for games <500 events.
 - **All stochasticity flows through the `Rng` port.** `ChaCha20Rng` in production. Rationale: determinism is the central architectural invariant; any direct `rand::random()` call is a bug.
 - **Four-variant adapter discipline, from day one.** Every port has `stub`, `production`, `record`, `playback` adapters. `record` wraps another adapter (usually `production`) and tees every input/output pair to disk; `playback` reads that tee and returns the stored values. Rationale: makes end-to-end tests cheap and deterministic; catches non-determinism the moment it appears.
+- **Input vs. output port asymmetry.** `Clock`, `Rng`, `FileSystem`, `LlmClient` are **input** ports — the engine consumes from them, and all four adapter variants are meaningful because playback is what gives us deterministic end-to-end tests. `GameEventSink` is the one **output** port — the engine produces to it, and `record`/`playback` collapse (the game event log *is* the tape for the game's own history; re-running with a playback sink would just compete with the real log writer). Established in Unit 2; see `crates/playtest-ports/src/lib.rs`.
+- **Three-categories-of-recording discipline.** The project has three distinct "recording" mechanisms that share the word but serve different purposes: (1) **port I/O tapes** written by `record` adapters for test-time determinism (disposable); (2) **operator logs** via the `tracing` crate for developer observability (not a port); (3) the **game event log** written via `GameEventSink` as the authoritative game history (the durable production artifact that downstream phases read). Conflating these leaks test concerns into production code. Documented in the `playtest-ports` lib-doc so the distinction survives re-derivation.
+- **Ports return `Result`, never panic on caller bugs.** `Rng::gen_range` on an empty range returns `RngError::InvalidRange` rather than panicking; `FileSystem` surfaces `NotFound` / `Io` / `TapeDivergence`; `GameEventSink` returns `Closed` after shutdown. Rationale: the `GameLoop` needs to attach game context (seed, tick, player) before surfacing these — panics cross the context boundary and lose the information needed for a minimal reproducer.
 - **Async `Agent` trait via `async_trait`.** Even though `RandomAgent` is sync and Phase 0–1 agents never suspend, the trait returns `impl Future`. Rationale: a human TerminalAgent (Phase 3) needs blocking I/O; an LLMAgent needs network I/O; retrofitting sync→async later is painful. Sync agents just return ready futures — zero runtime overhead.
 - **Single-threaded game loop; parallelism at the batch level.** One game runs on one thread. `playtest play --games N` fans games out across cores via `rayon`. Rationale: determinism-per-game is easy; determinism across parallel games requires only per-game seeds.
 - **JSONL event log, one file per game.** Filename: `<timestamp>-<seed>-<game_id>.jsonl`. First line is a header (game type, version, seed, config hash). Subsequent lines are events. Rationale: human-readable, grep-able, diffable, trivially streamable, no schema-migration headaches in Phase 0.
@@ -116,6 +128,16 @@ None yet (`docs/solutions/` does not exist). This plan will likely be the first 
 - **Parallelism**: rayon over game batches; single-threaded per-game.
 - **RNG crate**: `rand_chacha::ChaCha20Rng` (portable, deterministic across platforms).
 - **Serialization**: `serde` + `serde_json` for JSONL; `rusqlite` (bundled feature) for SQLite.
+
+### Resolved During Implementation (Units 1–2)
+
+- **`GameEventSink` over `EventSink`**: the original name conflated with record/playback tapes and `tracing`-based operator logs. Renamed in commit b21aed6 and documented with a three-categories table in the ports lib-doc.
+- **`GameEventSink` is string-oriented**: `emit(&mut self, line: &str)` + `flush()`. Serialization lives in `playtest-log`, not in the port. Keeps the stub adapter trivial (a `Vec<String>`) and lets non-JSON log formats (e.g., a future `tracing`-bridging sink) implement the port without re-inventing the trait.
+- **`Rng::gen_range` returns `Result`, not `u64`**: empty range is a caller bug but ports refuse rather than panic, so `GameLoop` can attach tick/player context to the error.
+- **`Rng::shuffle` uses `where Self: Sized`**: preserves object-safety for `&mut dyn Rng` while still providing a default Fisher-Yates; concrete callers get the method for free.
+- **`FileSystem::exists` method added**: originally omitted; needed by the CLI (`--out` directory pre-check) and by the ingest pass. Still intentionally narrow — no directory listing or metadata queries until a concrete caller needs them.
+- **Input vs. output port asymmetry is explicit**: `Clock`, `Rng`, `FileSystem`, `LlmClient` are input ports with four meaningful adapter variants; `GameEventSink` is the one output port where `record` aliases `production` and `playback` is a no-op that panics-on-use.
+- **Workspace-level clippy pedantic with targeted allows**: enforces a tight lint bar across every crate without per-crate clippy attributes.
 
 ### Deferred to Implementation
 
@@ -136,7 +158,7 @@ None yet (`docs/solutions/` does not exist). This plan will likely be the first 
     ├── playtest-roadmap.md               # existing
     └── crates/
         ├── playtest-core/                # Game trait, GameLoop, GameResult, PlayerId
-        ├── playtest-ports/               # Clock, Rng, FileSystem, EventSink, LlmClient traits
+        ├── playtest-ports/               # Clock, Rng, FileSystem, GameEventSink, LlmClient traits
         ├── playtest-adapters/            # stub/production/record/playback impls per port
         ├── playtest-agents/              # Agent trait + RandomAgent + ScriptedAgent
         ├── playtest-log/                 # EventLog writer/reader, JSONL format, replay
@@ -211,7 +233,7 @@ SQL queries  --[format]-->  markdown report
 
 ### Phase 0 — Engine foundations
 
-- [ ] **Unit 1: Workspace scaffolding and CI baseline**
+- [x] **Unit 1: Workspace scaffolding and CI baseline**
 
 **Goal:** Cargo workspace exists with all crates registered, compiles, and CI runs fmt + clippy + test.
 
@@ -253,7 +275,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 2: Port trait definitions**
+- [x] **Unit 2: Port trait definitions**
 
 **Goal:** Define the five port traits that carry every external-system interaction.
 
@@ -262,18 +284,18 @@ SQL queries  --[format]-->  markdown report
 **Dependencies:** Unit 1
 
 **Files:**
-- Create: `crates/playtest-ports/src/clock.rs` — `trait Clock { fn now(&mut self) -> UnixMillis; }`
-- Create: `crates/playtest-ports/src/rng.rs` — `trait Rng { fn next_u64(&mut self) -> u64; fn gen_range(&mut self, range: Range<u64>) -> u64; fn shuffle<T>(&mut self, slice: &mut [T]); }`
-- Create: `crates/playtest-ports/src/filesystem.rs` — `trait FileSystem { fn read(&self, path: &Path) -> Result<Vec<u8>>; fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<()>; fn append_line(&mut self, path: &Path, line: &str) -> Result<()>; }`
-- Create: `crates/playtest-ports/src/event_sink.rs` — `trait EventSink { fn emit(&mut self, record: &EventRecord) -> Result<()>; }`
-- Create: `crates/playtest-ports/src/llm_client.rs` — `trait LlmClient { async fn complete(&self, req: LlmRequest) -> Result<LlmResponse>; }` *(defined for symmetry; unused in Phase 0–1)*
-- Create: `crates/playtest-ports/src/lib.rs` — re-exports
-- Test: `crates/playtest-ports/tests/traits_object_safe.rs`
+- Create: `crates/playtest-ports/src/clock.rs` — `trait Clock { fn now(&mut self) -> UnixMillis; }` (`&mut self` so record/playback can mutate tape cursor under the same signature as production)
+- Create: `crates/playtest-ports/src/rng.rs` — `trait Rng { fn next_u64(&mut self) -> u64; fn gen_range(&mut self, range: Range<u64>) -> Result<u64, RngError>; fn shuffle<T>(&mut self, slice: &mut [T]) where Self: Sized; }` — `gen_range` returns `Result` (no panic on empty range); `shuffle` uses `where Self: Sized` to keep the trait object-safe while still offering a default Fisher-Yates
+- Create: `crates/playtest-ports/src/filesystem.rs` — `trait FileSystem { fn read(&self, path: &Path) -> Result<Vec<u8>, FsError>; fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), FsError>; fn append_line(&mut self, path: &Path, line: &str) -> Result<(), FsError>; fn exists(&self, path: &Path) -> bool; }` — intentionally narrow; `FsError::TapeDivergence` is the signal the record/playback adapters will use in Unit 3
+- Create: `crates/playtest-ports/src/game_event_sink.rs` — `trait GameEventSink { fn emit(&mut self, line: &str) -> Result<(), GameEventSinkError>; fn flush(&mut self) -> Result<(), GameEventSinkError>; }` — **string-oriented and serialization-agnostic** on purpose: `playtest-log` (Unit 6) owns JSON formatting, this port just writes lines. `flush` is required so game-end writes reach disk before the binary exits.
+- Create: `crates/playtest-ports/src/llm_client.rs` — `#[async_trait] trait LlmClient: Send + Sync { async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError>; }` *(defined for symmetry; production adapter lands in Phase 3)*
+- Create: `crates/playtest-ports/src/lib.rs` — re-exports + the **three-categories-of-recording** lib-doc (Port I/O tapes vs. Operator logs vs. Game event log) and the **input/output port asymmetry** doc
+- Test: `crates/playtest-ports/tests/traits_object_safe.rs` — compile-time guard that any future generic method or `impl Trait` return that breaks object-safety fails CI
 
 **Approach:**
-- All traits object-safe (except `LlmClient` which uses `async_trait` — acceptable, it's behind a feature if needed)
-- Error types per port via `thiserror`
-- No default impls; each adapter must implement the trait fully
+- All traits object-safe (`Clock`, `Rng`, `FileSystem`, `GameEventSink`) except `LlmClient` which uses `async_trait`. Object-safety is load-bearing for cheap record/playback wrappers that take `&mut dyn Port`.
+- Error types per port via `thiserror`; ports never panic on caller bugs (invalid range, closed sink, missing file) — they return errors so `GameLoop` can attach game context (seed, tick, player).
+- No default impls except `Rng::shuffle` (pure Fisher-Yates on top of `gen_range`, safe because of the `where Self: Sized` bound).
 
 **Patterns to follow:** Hexagonal architecture — ports live in their own crate, know nothing about adapters.
 
@@ -300,7 +322,7 @@ SQL queries  --[format]-->  markdown report
 - Create: `crates/playtest-adapters/src/clock/` — `stub.rs` (fixed time), `production.rs` (`SystemTime::now`), `record.rs`, `playback.rs`
 - Create: `crates/playtest-adapters/src/rng/` — `stub.rs` (returns sequence), `production.rs` (`ChaCha20Rng::seed_from_u64`), `record.rs`, `playback.rs`
 - Create: `crates/playtest-adapters/src/filesystem/` — `stub.rs` (in-memory HashMap), `production.rs` (std::fs), `record.rs`, `playback.rs`
-- Create: `crates/playtest-adapters/src/event_sink/` — `stub.rs` (Vec), `production.rs` (appends JSONL), `record.rs` (same as production in this case), `playback.rs` (N/A for sink; provide no-op that asserts on use)
+- Create: `crates/playtest-adapters/src/game_event_sink/` — `stub.rs` (`Vec<String>`), `production.rs` (appends lines via the `FileSystem` port), `record.rs` (aliases `production` — the event log *is* the tape, per the input/output asymmetry principle), `playback.rs` (no-op that returns `GameEventSinkError::Closed` on use, documenting that replay is strictly a read path)
 - Create: `crates/playtest-adapters/src/llm_client/` — `stub.rs` (returns canned response), `production.rs` (stub returning error with "Phase 3" message), `record.rs`, `playback.rs`
 - Create: `crates/playtest-adapters/src/recording.rs` — shared `RecordingTape` helper (append-only file of `(call_id, args_hash, output)` entries)
 - Test: `crates/playtest-adapters/tests/record_playback_roundtrip.rs`
@@ -352,7 +374,7 @@ SQL queries  --[format]-->  markdown report
   - `fn apply_event(&self, state: Self::State, event: &Self::Event) -> Self::State`
   - `fn public_view(&self, state: &Self::State, player: PlayerId) -> Self::PublicView`
   - `fn game_over(&self, state: &Self::State) -> Option<GameResult>`
-- `GameLoop` owns the state and pumps the loop; it does not own the event log (that is injected via `EventSink` port)
+- `GameLoop` owns the state and pumps the loop; it does not own the event log (that is injected via the `GameEventSink` port)
 
 **Patterns to follow:** Pure functions where possible; `apply_event` is deliberately non-failing (events are already validated by `apply_action`).
 
@@ -417,7 +439,7 @@ SQL queries  --[format]-->  markdown report
 **Files:**
 - Create: `crates/playtest-log/src/header.rs` — `LogHeader { schema: u32, game: String, version: String, seed: u64, agents: Vec<String>, started_at: UnixMillis, config_hash: String }`
 - Create: `crates/playtest-log/src/record.rs` — `enum LogRecord<E> { Header(LogHeader), Event { tick: u64, payload: E }, Final(GameResult) }`
-- Create: `crates/playtest-log/src/writer.rs` — `EventLogWriter` (implements the `EventSink` port, serializes to JSONL)
+- Create: `crates/playtest-log/src/writer.rs` — `EventLogWriter`: owns JSON serialization (converts `LogRecord<E>` to a line) and writes through a `GameEventSink`. The sink is dumb by design (see Unit 2's three-categories doc); this crate is where formatting lives.
 - Create: `crates/playtest-log/src/reader.rs` — streaming reader that yields `LogRecord<E>` values
 - Create: `crates/playtest-log/src/replay.rs` — `fn replay<G: Game>(game: &G, log_path: &Path) -> Result<Vec<G::State>>` — reconstructs every tick's state
 - Test: `crates/playtest-log/tests/roundtrip.rs`
@@ -427,6 +449,7 @@ SQL queries  --[format]-->  markdown report
 - Generic over `G::Event: Serialize + DeserializeOwned` — log crate knows nothing about Cribbage
 - `config_hash` is a SHA-256 of the serialized `G::Config` to detect replay against a changed config
 - Replay works in two modes: full (return every tick's state) and final-only (just confirm log is valid)
+- `EventLogWriter::finish()` (called from `GameLoop` on game-end) writes the final record *and* calls `GameEventSink::flush()` — without this, a soak-test crash leaves a half-written log. The port's flush contract (Unit 2) exists precisely for this handoff.
 
 **Patterns to follow:** Streaming / iterator-based reader — must handle multi-MB logs without loading everything at once.
 
