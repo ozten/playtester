@@ -507,7 +507,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 8: Cribbage game logic — deal, discard, pegging**
+- [x] **Unit 8: Cribbage game logic — deal, discard, pegging**
 
 **Goal:** First half of the Cribbage game flow: deal 6 cards to each player, discard 2 to crib, cut the starter, play the pegging phase with full peg scoring.
 

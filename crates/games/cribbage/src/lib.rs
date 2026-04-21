@@ -6,12 +6,22 @@
 //! This unit lands the standalone primitives (cards, deck, board, hand).
 //! The `Game` trait implementation arrives in later units.
 
+pub mod action;
 pub mod board;
 pub mod card;
 pub mod deck;
+pub mod event;
 pub mod hand;
+pub mod pegging;
+pub mod phase;
+pub mod state;
 
+pub use action::Action;
 pub use board::{Board, NUM_PLAYERS, PlayerPins, WINNING_SCORE};
 pub use card::{Card, Rank, Suit};
 pub use deck::{DECK_SIZE, fresh, shuffle};
+pub use event::Event;
 pub use hand::{Hand, HandError};
+pub use pegging::{PegReason, score_peg_play};
+pub use phase::Phase;
+pub use state::GameState;

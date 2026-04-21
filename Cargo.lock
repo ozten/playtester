@@ -280,6 +280,7 @@ dependencies = [
  "playtest-core",
  "playtest-ports",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 
