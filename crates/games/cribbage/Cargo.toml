@@ -22,6 +22,7 @@ uuid.workspace = true
 playtest-adapters.workspace = true
 playtest-agents.workspace = true
 playtest-log.workspace = true
+rayon.workspace = true
 serde_json.workspace = true
 tempfile = "3"
 tokio = { workspace = true, features = ["rt", "macros"] }

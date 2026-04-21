@@ -97,10 +97,37 @@ async fn ismcts_beats_heuristic_smoke() {
     );
 }
 
-#[tokio::test(flavor = "current_thread")]
+fn run_match_parallel(games: u32, ismcts_iterations: u32) -> (u32, u32, u32) {
+    use rayon::prelude::*;
+    let results: Vec<(Option<u8>, u8)> = (0..games)
+        .into_par_iter()
+        .map(|i| {
+            let seat = u8::try_from(i % 2).expect("0..=1 fits");
+            let seed = u64::from(i).wrapping_mul(0xDEAD_BEEF) ^ 0x1234_5678;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            (rt.block_on(play_one_game(seed, seat, ismcts_iterations)), seat)
+        })
+        .collect();
+    let mut iw = 0u32;
+    let mut hw = 0u32;
+    let mut dr = 0u32;
+    for (winner, seat) in results {
+        match winner {
+            Some(w) if w == seat => iw += 1,
+            Some(_) => hw += 1,
+            None => dr += 1,
+        }
+    }
+    (iw, hw, dr)
+}
+
+#[test]
 #[ignore = "10K games — run with --ignored for the R2.3 exit criterion"]
-async fn ismcts_beats_heuristic_10k() {
-    let (iw, hw, draws) = run_match(10_000, 1000).await;
+fn ismcts_beats_heuristic_10k() {
+    let (iw, hw, draws) = run_match_parallel(10_000, 1000);
     let total = iw + hw + draws;
     let rate = f64::from(iw) / f64::from(total);
     println!(
