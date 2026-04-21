@@ -10,13 +10,13 @@
 //! guaranteed object-safe, and `async_trait` may change that contract in
 //! the future.
 
-use playtest_ports::{Clock, EventSink, FileSystem, Rng};
+use playtest_ports::{Clock, FileSystem, GameEventSink, Rng};
 
 fn _assert_clock_object_safe(_: &mut dyn Clock) {}
 fn _assert_rng_object_safe(_: &mut dyn Rng) {}
 fn _assert_filesystem_object_safe(_: &dyn FileSystem) {}
 fn _assert_filesystem_mut_object_safe(_: &mut dyn FileSystem) {}
-fn _assert_event_sink_object_safe(_: &mut dyn EventSink) {}
+fn _assert_game_event_sink_object_safe(_: &mut dyn GameEventSink) {}
 
 #[test]
 fn ports_are_object_safe() {
