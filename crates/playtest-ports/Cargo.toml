@@ -10,3 +10,5 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+async-trait.workspace = true
+thiserror.workspace = true
