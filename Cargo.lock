@@ -277,11 +277,15 @@ name = "playtest-cribbage"
 version = "0.0.0"
 dependencies = [
  "playtest-adapters",
+ "playtest-agents",
  "playtest-core",
+ "playtest-log",
  "playtest-ports",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

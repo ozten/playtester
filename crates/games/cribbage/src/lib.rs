@@ -14,6 +14,8 @@ pub mod event;
 pub mod hand;
 pub mod pegging;
 pub mod phase;
+pub mod rules;
+pub mod scoring;
 pub mod state;
 
 pub use action::Action;
@@ -24,4 +26,6 @@ pub use event::Event;
 pub use hand::{Hand, HandError};
 pub use pegging::{PegReason, score_peg_play};
 pub use phase::Phase;
+pub use rules::{CribbageConfig, CribbageGame, PublicView};
+pub use scoring::{ShowScore, score_hand};
 pub use state::GameState;

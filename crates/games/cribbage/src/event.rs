@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::card::Card;
 use crate::pegging::PegReason;
+use crate::scoring::ShowScore;
 
 /// Full event taxonomy for Cribbage. The `#[serde(tag = "kind")]`
 /// representation gives each variant a self-describing JSON line in
@@ -56,6 +57,20 @@ pub enum Event {
     /// All cards have been played during pegging. Marks the transition
     /// out of the pegging phase.
     PeggingComplete,
+
+    /// One of the three show-phase scoring steps fired: non-dealer
+    /// hand, dealer hand, or dealer crib. `is_crib` distinguishes the
+    /// crib step from the hand steps.
+    ShowScored {
+        player: PlayerId,
+        is_crib: bool,
+        score: ShowScore,
+    },
+
+    /// A hand has completed without a winner — dealer rotates and the
+    /// next hand begins. Emitted by the engine between the end of show
+    /// and the start of the next deal.
+    HandComplete { next_dealer: PlayerId },
 
     /// A player crossed 121. The engine emits no further events after
     /// this one — the game is over.

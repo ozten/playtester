@@ -554,7 +554,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 9: Cribbage game logic — the show, crib counting, and game termination**
+- [x] **Unit 9: Cribbage game logic — the show, crib counting, and game termination**
 
 **Goal:** Second half of the Cribbage game flow: show phase (non-dealer counts hand, dealer counts hand, dealer counts crib), full combinatorial scoring, and the winner check.
 

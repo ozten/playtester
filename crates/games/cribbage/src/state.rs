@@ -25,6 +25,7 @@ use crate::event::Event;
 use crate::hand::Hand;
 use crate::pegging::{PegReason, score_peg_play};
 use crate::phase::Phase;
+use crate::scoring::score_hand;
 
 /// Full state of a single Cribbage game.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +48,10 @@ pub struct GameState {
     /// Remaining undealt deck. Starts at 52 cards in canonical order.
     /// Each `DealCard` and `CutStarter` event removes one card.
     pub deck: Vec<Card>,
+    /// Show-phase cursor: 0 = non-dealer hand, 1 = dealer hand,
+    /// 2 = dealer crib, 3 = ready for the `HandComplete` transition.
+    /// Meaningful only while `phase == Show`.
+    pub show_step: u8,
 }
 
 impl GameState {
@@ -69,6 +74,7 @@ impl GameState {
             to_act: 1 - dealer,
             board: Board::new(),
             deck: deck::fresh().to_vec(),
+            show_step: 0,
         }
     }
 
@@ -77,16 +83,32 @@ impl GameState {
         1 - self.dealer
     }
 
-    /// Whoever is up next, or `None` if the game is over (phase is
-    /// `Show` / `ScoreCrib` / `Finished` — Unit 9 fills in the first
-    /// two).
+    /// Whoever is up next. `Show` is engine-driven (deterministic
+    /// scoring, no randomness), but still exposed as `Actor::Chance`
+    /// because there's no player to prompt — the loop pulls the next
+    /// event via `resolve_chance`. `Finished` returns `None` to signal
+    /// the game is over.
     #[must_use]
     pub const fn next_actor(&self) -> Option<Actor> {
         match self.phase {
-            Phase::Deal | Phase::Cut => Some(Actor::Chance),
+            Phase::Deal | Phase::Cut | Phase::Show | Phase::ScoreCrib => Some(Actor::Chance),
             Phase::Discard | Phase::Pegging => Some(Actor::Player(self.to_act)),
-            Phase::Show | Phase::ScoreCrib | Phase::Finished => None,
+            Phase::Finished => None,
         }
+    }
+
+    /// Terminal check. Returns `Some` once any player's pin has
+    /// crossed [`WINNING_SCORE`] or `phase == Finished`.
+    #[must_use]
+    pub fn game_over(&self) -> Option<playtest_core::GameResult> {
+        if let Some(winner) = self.board.winner() {
+            return Some(playtest_core::GameResult {
+                winner: Some(winner),
+                reason: EndReason::Victory,
+                scores: self.board.pins.iter().map(|p| i32::from(p.front)).collect(),
+            });
+        }
+        None
     }
 
     /// Legal actions for `player` in the current phase. Returns an
@@ -157,6 +179,7 @@ impl GameState {
         match self.phase {
             Phase::Deal => self.resolve_chance_deal(rng),
             Phase::Cut => self.resolve_chance_cut(rng),
+            Phase::Show => self.resolve_chance_show(),
             _ => Err(GameError::ChanceFailed {
                 message: format!("resolve_chance called in phase {:?}", self.phase),
             }),
@@ -185,7 +208,15 @@ impl GameState {
                 self.refresh_peg_to_act();
             }
             Event::PeggingRoundEnd => self.fold_round_end(),
-            Event::PeggingComplete => self.phase = Phase::Show,
+            Event::PeggingComplete => {
+                self.phase = Phase::Show;
+                self.show_step = 0;
+            }
+            Event::ShowScored { player, score, .. } => {
+                self.board.advance(*player, u16::from(score.total));
+                self.show_step += 1;
+            }
+            Event::HandComplete { next_dealer } => self.fold_hand_complete(*next_dealer),
             Event::EndGame { .. } => self.phase = Phase::Finished,
         }
     }
@@ -218,6 +249,71 @@ impl GameState {
                 points: 2,
             })
         }
+    }
+
+    fn resolve_chance_show(&self) -> Result<Event, GameError> {
+        let starter = self.starter.ok_or_else(|| GameError::ChanceFailed {
+            message: "show phase reached without a starter card".into(),
+        })?;
+        match self.show_step {
+            0 => {
+                let nd = self.non_dealer();
+                let hand = self.counting_hand_for(nd)?;
+                let score = score_hand(hand, starter, false);
+                Ok(Event::ShowScored {
+                    player: nd,
+                    is_crib: false,
+                    score,
+                })
+            }
+            1 => {
+                let hand = self.counting_hand_for(self.dealer)?;
+                let score = score_hand(hand, starter, false);
+                Ok(Event::ShowScored {
+                    player: self.dealer,
+                    is_crib: false,
+                    score,
+                })
+            }
+            2 => {
+                if self.crib.len() != 4 {
+                    return Err(GameError::ChanceFailed {
+                        message: format!(
+                            "crib has {} cards, expected 4 at show_step 2",
+                            self.crib.len()
+                        ),
+                    });
+                }
+                let crib: [Card; 4] = [self.crib[0], self.crib[1], self.crib[2], self.crib[3]];
+                let score = score_hand(crib, starter, true);
+                Ok(Event::ShowScored {
+                    player: self.dealer,
+                    is_crib: true,
+                    score,
+                })
+            }
+            _ => Ok(Event::HandComplete {
+                next_dealer: 1 - self.dealer,
+            }),
+        }
+    }
+
+    /// The 4-card hand used for show scoring — these are the cards
+    /// the player actually played during pegging. Under standard
+    /// Cribbage rules, every card held post-discard is played during
+    /// pegging, so `played[p]` always has exactly 4 entries by the
+    /// time the show phase starts.
+    fn counting_hand_for(&self, p: PlayerId) -> Result<[Card; 4], GameError> {
+        let played = &self.played[p as usize];
+        if played.len() != 4 {
+            return Err(GameError::ChanceFailed {
+                message: format!(
+                    "player {p} played {} cards at show time, expected 4",
+                    played.len()
+                ),
+            });
+        }
+        Ok([played[0], played[1], played[2], played[3]])
     }
 
     fn draw_random_from_deck(&self, rng: &mut dyn Rng) -> Result<Card, GameError> {
@@ -419,6 +515,25 @@ impl GameState {
         self.running_total = running_total;
         self.last_to_play = Some(player);
         self.refresh_peg_to_act();
+    }
+
+    /// Reset per-hand state and rotate the dealer. Board scores
+    /// persist across hands — that's the whole point of multi-hand
+    /// play toward the 121-point target.
+    fn fold_hand_complete(&mut self, next_dealer: PlayerId) {
+        self.hands = [Hand::empty(), Hand::empty()];
+        self.played = [Vec::new(), Vec::new()];
+        self.crib = Vec::new();
+        self.starter = None;
+        self.pegging_stack.clear();
+        self.running_total = 0;
+        self.last_to_play = None;
+        self.go_said = [false, false];
+        self.show_step = 0;
+        self.deck = deck::fresh().to_vec();
+        self.dealer = next_dealer;
+        self.to_act = 1 - next_dealer;
+        self.phase = Phase::Deal;
     }
 
     fn fold_round_end(&mut self) {
