@@ -189,8 +189,14 @@ dependencies = [
 name = "playtest-agents"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
+ "playtest-adapters",
  "playtest-core",
  "playtest-ports",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

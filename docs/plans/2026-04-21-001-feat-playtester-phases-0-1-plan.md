@@ -391,7 +391,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 5: `Agent` trait + `RandomAgent` + `ScriptedAgent`**
+- [x] **Unit 5: `Agent` trait + `RandomAgent` + `ScriptedAgent`**
 
 **Goal:** The narrow agent interface, plus two baseline agents.
 
