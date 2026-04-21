@@ -76,6 +76,22 @@ Add `--tick N` to dump just the state after the Nth event (useful for bisecting)
 
 **Determinism check:** two runs of the same command (with `--fixed-time 0` to pin the header timestamp) produce byte-for-byte identical log files. Exercised in the CLI's smoke tests.
 
+## Round-robin agent tournaments — `playtest matchup`
+
+Play every agent in a pool against every other agent and emit a markdown win-rate matrix. For `N` agents and `--games-per-pair K`, it runs `N * N * K` games — for every ordered pair `(i, j)` agent `i` plays seat 0 and agent `j` plays seat 1 for K games. The matrix cell `[row=i, col=j]` is agent `i`'s raw win rate as seat 0. Seat bias shows up as asymmetry between `[i][j]` and `[j][i]`.
+
+```bash
+cargo run --release -p playtest-cli -- \
+  matchup \
+    --game cribbage \
+    --agents random,greedy-cribbage,heuristic-cribbage,ismcts-cribbage:iter=500 \
+    --games-per-pair 100 \
+    --seed 42 \
+    --out matrix.md
+```
+
+Agents can include parameterized specs (e.g. `ismcts-cribbage:iter=2000,c=1.4,depth=30`) and games within a pair run in parallel via rayon. Raw win rates only — no Wilson-score confidence intervals (that's Phase 6).
+
 ## Architecture
 
 - **Ports and adapters** — every external-system interaction (clock, RNG, filesystem, game event sink, LLM) crosses a port trait with four adapter variants: `stub`, `production`, `record`, `playback`. Record captures live I/O to a tape; playback replays the tape for deterministic tests.
@@ -90,10 +106,10 @@ Add `--tick N` to dump just the state after the Nth event (useful for bisecting)
 | `playtest-core` | `Game` trait, `Agent` trait, `GameLoop`, `GameResult`, `PlayerId` |
 | `playtest-ports` | Port traits: `Clock`, `Rng`, `FileSystem`, `GameEventSink`, `LlmClient` |
 | `playtest-adapters` | `stub`, `production`, `record`, `playback` adapters per port |
-| `playtest-agents` | Agent implementations: `RandomAgent`, `ScriptedAgent` (trait is in `playtest-core`) |
+| `playtest-agents` | Agent implementations: `RandomAgent`, `ScriptedAgent`, `GreedyAgent`, `HeuristicAgent`, `ISMCTSAgent` (trait is in `playtest-core`) |
 | `playtest-log` | JSONL event log writer, streaming reader, and replay |
-| `playtest-metrics` | SQLite schema, ingestion, `MetricRegistry`, reporter *(Phase 1)* |
-| `playtest-cli` | `playtest` binary: `play`, `replay` (`report` arrives in Phase 1) |
+| `playtest-metrics` | SQLite schema, ingestion, `MetricRegistry`, reporter |
+| `playtest-cli` | `playtest` binary: `play`, `replay`, `report`, `matchup`, `serve`, `api-schema` |
 | `crates/games/cribbage` | First game — 2-player standard Cribbage, 121 points |
 | `crates/games/shipwreck` | Second game — 2–4 player rescue-points card game with event cards |
 | `playtest-registry` | Game + agent lookup tables shared by the CLI and server |

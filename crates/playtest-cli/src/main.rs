@@ -37,6 +37,10 @@ enum Command {
 
     /// Dump the HTTP API's OpenAPI 3.1 spec to a file (or `-` for stdout).
     ApiSchema(commands::api_schema::ApiSchemaArgs),
+
+    /// Round-robin matchups between a pool of agents. Emits a markdown
+    /// win-rate matrix.
+    Matchup(commands::matchup::MatchupArgs),
 }
 
 fn main() -> Result<()> {
@@ -47,5 +51,6 @@ fn main() -> Result<()> {
         Command::Report(args) => commands::report::run(args),
         Command::Serve(args) => commands::serve::run(args),
         Command::ApiSchema(args) => commands::api_schema::run(args),
+        Command::Matchup(args) => commands::matchup::run(args),
     }
 }
