@@ -640,7 +640,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 11: Soak test, determinism audit, and Phase 0 exit-criteria validation**
+- [x] **Unit 11: Soak test, determinism audit, and Phase 0 exit-criteria validation**
 
 **Goal:** Prove the Phase 0 exit criteria: 10K games <60s/core (R0.9), zero panics in 100K games (R0.11), complete replayable log for every game (R0.10).
 

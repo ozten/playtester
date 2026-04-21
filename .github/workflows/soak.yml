@@ -1,0 +1,48 @@
+name: Soak
+
+# Runs the ignored soak tests that prove Phase 0's exit criteria
+# (R0.9 / R0.10 / R0.11). These take several minutes even in release
+# mode, so they live on a nightly cron rather than blocking PRs.
+# The fast PR-gate suite in ci.yml covers everything else, including
+# the determinism audit.
+
+on:
+  schedule:
+    # 07:00 UTC every day.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  soak:
+    name: 10K + 100K soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install stable
+          rustup component add rustfmt clippy
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-soak-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-soak-
+            ${{ runner.os }}-cargo-
+
+      - name: 10K games in under 60 seconds (R0.9)
+        run: cargo test --release -p playtest-cli --test soak_10k -- --ignored --nocapture
+
+      - name: 100K games zero-panic + sample replay (R0.10, R0.11)
+        run: cargo test --release -p playtest-cli --test soak_100k -- --ignored --nocapture
