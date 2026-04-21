@@ -468,7 +468,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 7: Cribbage primitives (cards, deck, board, hand)**
+- [x] **Unit 7: Cribbage primitives (cards, deck, board, hand)**
 
 **Goal:** The game-specific building blocks for Cribbage, with exhaustive tests.
 

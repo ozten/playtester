@@ -276,8 +276,11 @@ dependencies = [
 name = "playtest-cribbage"
 version = "0.0.0"
 dependencies = [
+ "playtest-adapters",
  "playtest-core",
  "playtest-ports",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
