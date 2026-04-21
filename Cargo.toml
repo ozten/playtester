@@ -12,6 +12,7 @@ members = [
     "crates/playtest-registry",
     "crates/playtest-server",
     "crates/games/cribbage",
+    "crates/games/shipwreck",
 ]
 
 [workspace.package]
@@ -65,6 +66,7 @@ playtest-cli = { path = "crates/playtest-cli" }
 playtest-registry = { path = "crates/playtest-registry" }
 playtest-server = { path = "crates/playtest-server" }
 playtest-cribbage = { path = "crates/games/cribbage" }
+playtest-shipwreck = { path = "crates/games/shipwreck" }
 
 [profile.release]
 lto = "thin"

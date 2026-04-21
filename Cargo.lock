@@ -1180,6 +1180,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtest-shipwreck"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
