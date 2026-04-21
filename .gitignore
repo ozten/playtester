@@ -1,0 +1,14 @@
+target/
+Cargo.lock.bak
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
+# game logs + metric DBs — CLI output, not source
+/games/
+*.sqlite
+*.sqlite-journal
+*.db
+*.jsonl
+!crates/games/**/tests/fixtures/*.jsonl
