@@ -23,6 +23,7 @@ use crate::result::GameResult;
 pub struct GameLoop<'a, G: Game> {
     game: &'a G,
     state: G::State,
+    tick: u64,
 }
 
 impl<'a, G: Game> GameLoop<'a, G> {
@@ -31,6 +32,7 @@ impl<'a, G: Game> GameLoop<'a, G> {
         Self {
             game,
             state: initial_state,
+            tick: 0,
         }
     }
 
@@ -42,6 +44,13 @@ impl<'a, G: Game> GameLoop<'a, G> {
     /// Borrow the current state.
     pub fn state(&self) -> &G::State {
         &self.state
+    }
+
+    /// Number of events emitted so far (and the `tick` of the **next**
+    /// event). Starts at 0.
+    #[must_use]
+    pub fn tick(&self) -> u64 {
+        self.tick
     }
 
     /// Run the loop to completion.
@@ -68,7 +77,7 @@ impl<'a, G: Game> GameLoop<'a, G> {
             match self.game.next_actor(&self.state) {
                 Actor::Chance => {
                     let event = self.game.resolve_chance(&self.state, rng)?;
-                    emit_event(sink, &event)?;
+                    self.emit_event(sink, &event)?;
                     self.game.apply_event(&mut self.state, &event);
                 }
                 Actor::Player(p) => {
@@ -103,21 +112,36 @@ impl<'a, G: Game> GameLoop<'a, G> {
 
                     let events = self.game.apply_action(&self.state, p, &legal[choice])?;
                     for e in &events {
-                        emit_event(sink, e)?;
+                        self.emit_event(sink, e)?;
                         self.game.apply_event(&mut self.state, e);
                     }
                 }
             }
         }
     }
-}
 
-fn emit_event<E: serde::Serialize>(
-    sink: &mut dyn GameEventSink,
-    event: &E,
-) -> Result<(), GameError> {
-    let line =
-        serde_json::to_string(event).map_err(|source| GameError::EventSerialization { source })?;
-    sink.emit(&line)
-        .map_err(|source| GameError::SinkFailed { source })
+    fn emit_event(
+        &mut self,
+        sink: &mut dyn GameEventSink,
+        event: &G::Event,
+    ) -> Result<(), GameError> {
+        // Wire format matches `playtest_log::LogRecord::Event`, so the log
+        // crate's reader can deserialize the loop's raw output directly.
+        #[derive(serde::Serialize)]
+        struct EventLine<'a, E> {
+            kind: &'static str,
+            tick: u64,
+            payload: &'a E,
+        }
+        let line = serde_json::to_string(&EventLine {
+            kind: "event",
+            tick: self.tick,
+            payload: event,
+        })
+        .map_err(|source| GameError::EventSerialization { source })?;
+        sink.emit(&line)
+            .map_err(|source| GameError::SinkFailed { source })?;
+        self.tick += 1;
+        Ok(())
+    }
 }

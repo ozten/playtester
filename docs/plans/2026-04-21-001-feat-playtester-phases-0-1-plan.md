@@ -428,7 +428,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 6: Event log + replay infrastructure**
+- [x] **Unit 6: Event log + replay infrastructure**
 
 **Goal:** JSONL event log writer, reader, and replay function. Snapshots are derived, not stored separately.
 
