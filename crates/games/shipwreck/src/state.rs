@@ -18,13 +18,13 @@
 
 use std::collections::VecDeque;
 
+use playtest_core::PlayerId;
 use serde::{Deserialize, Serialize};
 
-use crate::PlayerId;
-use crate::card::{Card, PlayerCard};
+use crate::card::{Card, EquipmentCard, PlayerCard};
 use crate::config::ShipWreckConfig;
 use crate::phase::Phase;
-use crate::raft::Raft;
+use crate::raft::{Raft, SlotId};
 
 /// A multi-step event in progress. Only Typhoon produces one of these
 /// today; the enum keeps the shape ready for future multi-step events
@@ -61,6 +61,15 @@ impl PendingEvent {
     }
 }
 
+/// A player card that has been placed on one of this player's raft
+/// slots. Carries the slot so the legal-action enumerator and
+/// food-consumption bookkeeping can find it without a second lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlacedPlayerCard {
+    pub card: PlayerCard,
+    pub slot: SlotId,
+}
+
 /// Per-seat state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerState {
@@ -71,11 +80,10 @@ pub struct PlayerState {
     /// The player's raft (base cards + extensions + installed
     /// upgrades).
     pub raft: Raft,
-    /// Player cards that have been placed on raft slots. For Unit 21
-    /// this is a flat list; Unit 22 may migrate to a slot map if the
-    /// legal-action enumerator needs it. Entries correspond to cards
-    /// removed from `hand` by a successful `PlacePlayerCard`.
-    pub played_players: Vec<PlayerCard>,
+    /// Player cards currently occupying this player's raft slots. A
+    /// slot may hold both a player card (here) and an equipment upgrade
+    /// (on `raft.upgrades`) — the two are independent.
+    pub played_players: Vec<PlacedPlayerCard>,
     /// Food reserves carried forward from prior turns (primarily from
     /// RainCatcher / FlyingFish). Kept as `i16` because future spec
     /// refinements may allow transient negative balances during
@@ -98,7 +106,20 @@ impl PlayerState {
             inventory: [0; 5],
         }
     }
+
+    /// True if this player already has a player card placed on `slot`.
+    #[must_use]
+    pub fn has_player_card_on_slot(&self, slot: SlotId) -> bool {
+        self.played_players.iter().any(|pp| pp.slot == slot)
+    }
 }
+
+/// Starting food counter for every seat in Unit 22's scope. Chosen to
+/// keep played player cards alive long enough for a Random-vs-Random
+/// game to exhaust the wreckage pools (rather than collapsing via
+/// starvation as soon as anyone places a card). Tunable constant —
+/// revisit if the design-balance signal in `random_self_play` shifts.
+pub const STARTING_FOOD_COUNTER: i16 = 6;
 
 /// Full state of a ShipWreck game.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +134,10 @@ pub struct GameState {
     /// Per-player face-up pool. `face_up_pools[i]` belongs to
     /// `PlayerId(i)`. Length always equals `config.num_players`.
     pub face_up_pools: Vec<Vec<Card>>,
+    /// Equipment pile. `equipment_deck.last()` is the "currently
+    /// available" card — the one a player can buy if they can pay for
+    /// it. Popped on `BuildEquipment`.
+    pub equipment_deck: Vec<EquipmentCard>,
     /// Whose turn it is during `Phase::Play`. During
     /// `Phase::ResolvingEvent` the actor is derived from the top of
     /// `event_resolution_stack` instead.
@@ -141,9 +166,17 @@ impl GameState {
             players,
             wreckage_deck: Vec::new(),
             face_up_pools,
+            equipment_deck: Vec::new(),
             current_player: 0,
             phase: Phase::Setup,
             event_resolution_stack: Vec::new(),
         }
+    }
+
+    /// Current "top of deck" equipment card offered for purchase, or
+    /// `None` when the pile is exhausted.
+    #[must_use]
+    pub fn current_equipment(&self) -> Option<EquipmentCard> {
+        self.equipment_deck.last().copied()
     }
 }

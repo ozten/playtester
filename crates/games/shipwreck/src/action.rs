@@ -15,9 +15,9 @@
 //! See `docs/shipwreck.md` for the game-rules-level semantics of each
 //! variant.
 
+use playtest_core::PlayerId;
 use serde::{Deserialize, Serialize};
 
-use crate::PlayerId;
 use crate::card::{EquipmentKind, PlayerCardId};
 use crate::raft::SlotId;
 

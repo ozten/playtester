@@ -242,7 +242,12 @@ mod initial_invariants {
         let setup = run_setup(1, 4);
         for p in &setup.state.players {
             assert_eq!(p.inventory, [0; 5]);
-            assert_eq!(p.food_counter, 0);
+            // Unit 22 seeds food with `STARTING_FOOD_COUNTER` so
+            // Random-vs-Random self-play doesn't collapse via starvation
+            // the turn any player card is placed. Asserting positive
+            // reserves here pins the current tuning so a silent drop
+            // back to zero is caught.
+            assert!(p.food_counter > 0, "starting food counter");
             assert!(p.played_players.is_empty());
         }
     }

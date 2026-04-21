@@ -12,13 +12,13 @@
 //! to disk without any bespoke conversion. `Deserialize` is derived so
 //! replay tools can read the log back into memory with the same types.
 
+use playtest_core::{EndReason, PlayerId};
 use serde::{Deserialize, Serialize};
 
 use crate::action::{EventCardKind, EventTarget};
 use crate::card::{Card, EquipmentKind, PlayerCardId};
 use crate::raft::SlotId;
 use crate::resource::Resource;
-use crate::{EndReason, PlayerId};
 
 /// Outcome of resolving an in-game event card. Each enum variant names
 /// the mechanical result so metrics can count "how many sharks were
@@ -132,10 +132,24 @@ pub enum Event {
         outcome: EventOutcome,
     },
 
-    /// End-of-turn food consumption. `starved` is true if the player
-    /// could not pay the food cost and a placed player card was
-    /// discarded as a result.
-    FoodConsumed { player: PlayerId, starved: bool },
+    /// End-of-turn food consumption for one placed player card. One
+    /// `FoodConsumed` event is emitted per positive-food-cost card in
+    /// `played_players` iteration order.
+    ///
+    /// - `slot` identifies the placed player card being fed (its
+    ///   raft slot at the moment `apply_action` computed the event).
+    /// - `amount` is the food the card would have cost (always > 0 —
+    ///   zero-cost cards like Wilson don't produce a FoodConsumed).
+    /// - `starved` is true when the food counter couldn't cover the
+    ///   cost; in that case `apply_event` drops the corresponding
+    ///   placed player card and the food counter stays put rather
+    ///   than going negative.
+    FoodConsumed {
+        player: PlayerId,
+        slot: SlotId,
+        amount: u8,
+        starved: bool,
+    },
 
     /// Player ended their turn — emitted once per turn, after any
     /// food-consumption events.

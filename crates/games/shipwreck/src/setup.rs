@@ -24,8 +24,8 @@ use crate::card::Card;
 use crate::config::ShipWreckConfig;
 use crate::event::Event;
 use crate::phase::Phase;
-use crate::pool::{all_player_cards, all_wreckage_cards};
-use crate::state::GameState;
+use crate::pool::{all_equipment, all_player_cards, all_wreckage_cards};
+use crate::state::{GameState, STARTING_FOOD_COUNTER};
 
 /// Number of wreckage cards dealt face-down into each player's hand
 /// during setup (`docs/shipwreck.md`: "each player has 6 wreckage
@@ -58,6 +58,17 @@ pub fn build_initial_state(
     let n = cfg.num_players as usize;
     let mut state = GameState::empty_for(*cfg);
     let mut events: Vec<Event> = Vec::new();
+
+    // Seed the equipment pile + starting food. Equipment is shuffled so
+    // the "top card" a player sees is random-but-deterministic. Food
+    // reserves start at a small positive number so played player cards
+    // don't immediately starve (see `STARTING_FOOD_COUNTER` rationale).
+    let mut equipment = all_equipment();
+    shuffle_via_port(&mut equipment, rng);
+    state.equipment_deck = equipment;
+    for seat in 0..n {
+        state.players[seat].food_counter = STARTING_FOOD_COUNTER;
+    }
 
     // --- 1. Shuffle & deal one player card per seat -----------------
     let mut player_deck: Vec<_> = all_player_cards();

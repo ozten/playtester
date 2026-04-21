@@ -8,44 +8,29 @@
 //! interrupt the turn flow.
 //!
 //! Unit 20 shipped the atomic primitives (cards, card pool, raft,
-//! resources). Unit 21 (this unit) adds the state machine types and
-//! the setup/deal flow. No `Game` trait implementation yet — that
-//! arrives in Unit 22.
+//! resources). Unit 21 added the state machine types and the
+//! setup/deal flow. Unit 22 (this unit) lands the `Game` trait impl
+//! (`ShipWreckGame`) *minus* event-card resolution, plus determinize
+//! and a public view.
 //!
 //! See `docs/shipwreck.md` for the full game spec.
 
 pub mod action;
 pub mod card;
 pub mod config;
+pub mod determinize;
 pub mod event;
 pub mod phase;
 pub mod pool;
+pub mod public_view;
 pub mod raft;
 pub mod resource;
+pub mod rules;
 pub mod state;
+pub mod turns;
 
 #[doc(hidden)]
 pub mod setup;
-
-// Local re-definitions of two `playtest-core` types. Unit 21 must not
-// depend on `playtest-core` (the `Game` trait impl lands in Unit 22),
-// but `PlayerId` and `EndReason` are needed on state/action/event
-// signatures. Defined identically in shape here so Unit 22's type
-// aliases can swap them out (or this crate can grow the dep at that
-// point) without a schema migration.
-
-/// Zero-based player index. Identical shape to
-/// `playtest_core::PlayerId`.
-pub type PlayerId = u8;
-
-/// Why a game ended. Identical shape to `playtest_core::EndReason`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum EndReason {
-    Victory,
-    Draw,
-    Stalemate,
-    Other(String),
-}
 
 pub use action::{Action, EventCardKind, EventResolution, EventTarget};
 pub use card::{
@@ -59,6 +44,8 @@ pub use pool::{
     DEFAULT_FLYING_FISH_COUNT, DEFAULT_SHARK_COUNT, DEFAULT_TYPHOON_COUNT, ITEM_COUNT_PER_RESOURCE,
     RAFT_EXTENSION_COUNT, all_equipment, all_player_cards, all_wreckage_cards,
 };
+pub use public_view::{ShipWreckPublicView, public_view};
 pub use raft::{Raft, RaftError, SlotId};
 pub use resource::{InsufficientResources, Resource, ResourceCost};
-pub use state::{GameState, PendingEvent, PendingEventKind, PlayerState};
+pub use rules::ShipWreckGame;
+pub use state::{GameState, PendingEvent, PendingEventKind, PlacedPlayerCard, PlayerState};

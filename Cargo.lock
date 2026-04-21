@@ -1184,10 +1184,14 @@ name = "playtest-shipwreck"
 version = "0.0.0"
 dependencies = [
  "playtest-adapters",
+ "playtest-agents",
+ "playtest-core",
  "playtest-ports",
+ "rand_chacha",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

@@ -210,7 +210,7 @@ pub enum EventCard {
 /// `kind` — because [`EquipmentCard`] already has a `kind` field
 /// (discriminating Telescope/AutoNets/…), and using the same tag name
 /// at two nesting levels causes a serde duplicate-field error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "card_type")]
 pub enum Card {
     Player(PlayerCard),
