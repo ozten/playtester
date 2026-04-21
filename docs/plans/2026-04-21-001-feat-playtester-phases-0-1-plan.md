@@ -310,7 +310,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 3: Adapter quartet (stub, production, record, playback)**
+- [x] **Unit 3: Adapter quartet (stub, production, record, playback)**
 
 **Goal:** Every port has four adapter implementations. The record/playback pair is the critical piece — it is what gives us deterministic end-to-end tests.
 
