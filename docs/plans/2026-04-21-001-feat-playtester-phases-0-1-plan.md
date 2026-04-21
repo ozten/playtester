@@ -601,7 +601,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 10: CLI `play` and `replay` subcommands**
+- [x] **Unit 10: CLI `play` and `replay` subcommands**
 
 **Goal:** The user-facing binary that drives everything shipped in Phase 0.
 
