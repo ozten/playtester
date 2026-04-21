@@ -5,6 +5,9 @@ Cargo.lock.bak
 .DS_Store
 .idea/
 .vscode/
+# Claude Code local harness artifacts (scheduled-task locks, local settings)
+/.claude/
+
 # game logs + metric DBs — CLI output, not source
 /games/
 *.sqlite
