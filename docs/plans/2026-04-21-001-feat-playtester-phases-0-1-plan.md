@@ -348,7 +348,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 4: Core `Game` trait and game loop**
+- [x] **Unit 4: Core `Game` trait and game loop**
 
 **Goal:** The game-agnostic harness: `Game` trait, `GameLoop`, `GameResult`, `PlayerId`.
 
