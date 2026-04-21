@@ -674,7 +674,7 @@ SQL queries  --[format]-->  markdown report
 
 ### Phase 1 — Metrics and analytics spine
 
-- [ ] **Unit 12: Metric registry + game-agnostic metrics**
+- [x] **Unit 12: Metric registry + game-agnostic metrics**
 
 **Goal:** Define the metric-registry abstraction: games declare which metrics they emit and how to extract them from an event stream. The harness knows how to persist any metric.
 
