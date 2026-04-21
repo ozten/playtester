@@ -24,7 +24,7 @@ struct PickState {
     turn: u32,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Pick(i32);
 
 #[derive(Clone, Serialize)]

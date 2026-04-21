@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::card::Card;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Action {
     /// Discard two cards from a 6-card hand into the crib. Legal only
     /// during [`crate::phase::Phase::Discard`].

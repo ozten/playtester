@@ -12,7 +12,7 @@ use serde::Serialize;
 /// It never actually plays — the tests drive `choose` directly.
 struct NullGame;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct Noop;
 
 #[derive(Clone, Serialize)]

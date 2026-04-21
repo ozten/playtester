@@ -13,6 +13,7 @@ workspace = true
 playtest-core.workspace = true
 playtest-ports.workspace = true
 async-trait.workspace = true
+rand_chacha.workspace = true
 
 [dev-dependencies]
 playtest-adapters.workspace = true

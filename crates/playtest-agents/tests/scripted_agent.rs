@@ -17,7 +17,7 @@ use tempfile::tempdir;
 
 struct NullGame;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct Tag(u32);
 
 #[derive(Clone, Serialize)]
@@ -95,7 +95,7 @@ struct TallyState {
     next_player: PlayerId,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct Add(u8);
 
 #[derive(Clone, Serialize)]

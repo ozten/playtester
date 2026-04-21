@@ -20,7 +20,7 @@ use futures::Stream;
 use playtest_api::{
     ApiError, ApiErrorCode, ApiResponse, CreateRunRequest, RunStatus, RunSummary,
 };
-use playtest_registry::agent_registry::KNOWN_AGENTS;
+use playtest_registry::agent_registry::{KNOWN_AGENTS, is_known_agent};
 use playtest_registry::game_registry::{KNOWN_GAMES, lookup as lookup_game};
 use uuid::Uuid;
 
@@ -48,9 +48,11 @@ async fn create_run(
         ))
     })?;
 
-    // Validate each agent name.
+    // Validate each agent name. Accept parameterized forms like
+    // `"<agent-name>:key1=v1,key2=v2"` — `is_known_agent` splits
+    // off the `:params` suffix before checking.
     for name in &req.agents {
-        if !KNOWN_AGENTS.contains(&name.as_str()) {
+        if !is_known_agent(name) {
             return Err(api_error(ApiError::with_details(
                 ApiErrorCode::UnknownAgent,
                 format!("unknown agent: {name}"),

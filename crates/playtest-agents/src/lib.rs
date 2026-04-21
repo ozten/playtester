@@ -12,11 +12,13 @@
 pub mod eval;
 pub mod greedy;
 pub mod heuristic;
+pub mod ismcts;
 pub mod random;
 pub mod scripted;
 
 pub use eval::EvalFn;
 pub use greedy::GreedyAgent;
 pub use heuristic::{DEFAULT_TEMPERATURE, HeuristicAgent};
+pub use ismcts::{ISMCTSAgent, ISMCTSConfig, parse_config_overrides};
 pub use random::RandomAgent;
 pub use scripted::ScriptedAgent;

@@ -19,7 +19,7 @@ use uuid::Uuid;
 #[derive(Debug)]
 struct TestGame;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct Noop;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

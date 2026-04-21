@@ -22,7 +22,7 @@ struct TallyState {
     next_player: PlayerId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Tally(u8);
 
 #[derive(Debug, Clone, Serialize)]

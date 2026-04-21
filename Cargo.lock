@@ -1029,6 +1029,7 @@ dependencies = [
  "playtest-adapters",
  "playtest-core",
  "playtest-ports",
+ "rand_chacha",
  "serde",
  "serde_json",
  "tempfile",

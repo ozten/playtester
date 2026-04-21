@@ -31,9 +31,12 @@ pub trait Game {
     type State;
 
     /// An agent's chosen move. Compared by equality in `legal_actions`
-    /// so must be `PartialEq`. Need not serialize — only events make it
-    /// to the log.
-    type Action: Clone + PartialEq;
+    /// so must be `PartialEq + Eq`. Hashable so ISMCTS can key its
+    /// children by action identity (SO-ISMCTS requires a stable child
+    /// key that survives determinization changing the set of legal
+    /// actions across iterations). Need not serialize — only events
+    /// make it to the log.
+    type Action: Clone + PartialEq + Eq + core::hash::Hash;
 
     /// An atomic observable change to the game. This is the serialized
     /// unit — the `Serialize` bound lets the engine emit events to the

@@ -44,7 +44,7 @@ pub enum EventCardKind {
 /// - `Typhoon` has no target — every player chooses their own
 ///   sacrifice during resolution. `None` is the only valid payload.
 /// - `FlyingFish` has no target; it resolves on the caster.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EventTarget {
     /// Targets a single slot on `player`'s raft. Used by Shark.
@@ -58,7 +58,7 @@ pub enum EventTarget {
 ///
 /// Shark and FlyingFish resolve immediately on play, so they never
 /// produce a pending resolution for another player to answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EventResolution {
     /// Sacrifice the given slot (an extension or upgrade) to the typhoon.
@@ -69,7 +69,7 @@ pub enum EventResolution {
 }
 
 /// Every intent an agent can express on their turn.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
     /// Insert a raft-extension card from hand immediately after
