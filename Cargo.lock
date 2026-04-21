@@ -1183,6 +1183,8 @@ dependencies = [
 name = "playtest-shipwreck"
 version = "0.0.0"
 dependencies = [
+ "playtest-adapters",
+ "playtest-ports",
  "serde",
  "serde_json",
  "thiserror",
