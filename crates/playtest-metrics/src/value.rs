@@ -24,6 +24,17 @@ pub struct MetricValue {
     /// `None` for game-level metrics.
     pub player: Option<PlayerId>,
 
+    /// Optional categorical sub-key. Used when a single metric name is
+    /// fanned out across discrete categories — Cribbage's per-card
+    /// metrics emit one `MetricValue` per `(metric_name, rank)` pair
+    /// using the rank symbol (`"A"`, `"2"`, …, `"K"`) as the tag. The
+    /// Unit 14 SQLite schema has a matching `tag` column, so tagged
+    /// values land with no transformation.
+    ///
+    /// `None` when the metric is not tagged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+
     pub value: MetricValueKind,
 }
 
@@ -64,25 +75,36 @@ mod tests {
                 game_id: g,
                 metric_name: "game_length_ticks".into(),
                 player: None,
+                tag: None,
                 value: MetricValueKind::Count(142),
             },
             MetricValue {
                 game_id: g,
                 metric_name: "winner".into(),
                 player: None,
+                tag: None,
                 value: MetricValueKind::Tag("player_0".into()),
             },
             MetricValue {
                 game_id: g,
                 metric_name: "dealer_won".into(),
                 player: None,
+                tag: None,
                 value: MetricValueKind::Bool(true),
             },
             MetricValue {
                 game_id: g,
                 metric_name: "pegging_efficiency".into(),
                 player: Some(0),
+                tag: None,
                 value: MetricValueKind::Scalar(0.375),
+            },
+            MetricValue {
+                game_id: g,
+                metric_name: "card_kept_count".into(),
+                player: Some(1),
+                tag: Some("5".into()),
+                value: MetricValueKind::Count(3),
             },
         ];
         for mv in cases {
@@ -90,6 +112,22 @@ mod tests {
             let back: MetricValue = serde_json::from_str(&json).unwrap();
             assert_eq!(mv, back);
         }
+    }
+
+    #[test]
+    fn untagged_metric_value_omits_tag_from_json() {
+        let v = MetricValue {
+            game_id: Uuid::nil(),
+            metric_name: "x".into(),
+            player: None,
+            tag: None,
+            value: MetricValueKind::Count(1),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(
+            !json.contains("\"tag\""),
+            "expected tag to be omitted, got: {json}"
+        );
     }
 
     #[test]

@@ -61,6 +61,7 @@ pub fn extract(game_id: Uuid, acc: &Accumulator) -> Vec<MetricValue> {
         game_id,
         metric_name: GAME_ENDED_IN_PHASE.into(),
         player: None,
+        tag: None,
         value: MetricValueKind::Tag(phase_tag(acc.end_phase).into()),
     });
 
@@ -70,6 +71,7 @@ pub fn extract(game_id: Uuid, acc: &Accumulator) -> Vec<MetricValue> {
         game_id,
         metric_name: CUTS_PRODUCING_NIBS.into(),
         player: None,
+        tag: None,
         value: MetricValueKind::Count(i64::try_from(nibs_hands).unwrap_or(i64::MAX)),
     });
 
@@ -77,6 +79,7 @@ pub fn extract(game_id: Uuid, acc: &Accumulator) -> Vec<MetricValue> {
         game_id,
         metric_name: LEAD_CHANGES.into(),
         player: None,
+        tag: None,
         value: MetricValueKind::Count(i64::from(acc.lead_changes)),
     });
 
@@ -90,6 +93,7 @@ pub fn extract(game_id: Uuid, acc: &Accumulator) -> Vec<MetricValue> {
                 game_id,
                 metric_name: GAME_WINNER_WAS_DEALER.into(),
                 player: None,
+                tag: None,
                 value: MetricValueKind::Bool(winner == dealer),
             });
         }
@@ -99,6 +103,7 @@ pub fn extract(game_id: Uuid, acc: &Accumulator) -> Vec<MetricValue> {
             game_id,
             metric_name: FINAL_SCORE_MARGIN.into(),
             player: None,
+            tag: None,
             value: MetricValueKind::Count(i64::from(margin)),
         });
     }

@@ -87,7 +87,7 @@ fn deal_events(p0: [(Rank, Suit); 6], p1: [(Rank, Suit); 6], non_dealer: u8) -> 
 
 fn find<'a>(vs: &'a [MetricValue], name: &str, player: Option<u8>) -> &'a MetricValue {
     vs.iter()
-        .find(|v| v.metric_name == name && v.player == player)
+        .find(|v| v.metric_name == name && v.player == player && v.tag.is_none())
         .unwrap_or_else(|| panic!("missing metric {name} for player {player:?}"))
 }
 
@@ -95,6 +95,17 @@ fn find_count(vs: &[MetricValue], name: &str, player: Option<u8>) -> i64 {
     match find(vs, name, player).value {
         MetricValueKind::Count(n) => n,
         ref other => panic!("{name}: expected Count, got {other:?}"),
+    }
+}
+
+fn find_tagged_count(vs: &[MetricValue], name: &str, player: Option<u8>, tag: &str) -> i64 {
+    let mv = vs
+        .iter()
+        .find(|v| v.metric_name == name && v.player == player && v.tag.as_deref() == Some(tag))
+        .unwrap_or_else(|| panic!("missing metric {name} player={player:?} tag={tag:?}"));
+    match mv.value {
+        MetricValueKind::Count(n) => n,
+        ref other => panic!("{name}[tag={tag}]: expected Count, got {other:?}"),
     }
 }
 
@@ -519,6 +530,10 @@ fn fixture_e_multiple_lead_changes() {
 /// triple. Here we synthesize a hand where a single card's fate is
 /// unambiguous and assert each expected count.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "linear fixture: synthetic event stream + focused assertions on specific (rank, player) cells"
+)]
 fn per_card_counts_track_dealt_kept_discarded_and_winner_correlates() {
     let dealer: u8 = 0;
     let non_dealer: u8 = 1;
@@ -583,34 +598,89 @@ fn per_card_counts_track_dealt_kept_discarded_and_winner_correlates() {
     let values = CribbageMetrics.extract(Uuid::nil(), &log);
 
     // Non-dealer was dealt a Five — dealt count is 1, kept count is 1
-    // (they kept the Five in their 4-card hand).
-    let dealt_5 = format!("{}_rank_5", per_card::CARD_DEALT_COUNT);
-    let kept_5 = format!("{}_rank_5", per_card::CARD_KEPT_COUNT);
-    assert_eq!(find_count(&values, &dealt_5, Some(non_dealer)), 1);
-    assert_eq!(find_count(&values, &kept_5, Some(non_dealer)), 1);
+    // (they kept the Five in their 4-card hand). Per-card values carry
+    // the rank symbol as the `tag` on MetricValue.
+    assert_eq!(
+        find_tagged_count(&values, per_card::CARD_DEALT_COUNT, Some(non_dealer), "5"),
+        1
+    );
+    assert_eq!(
+        find_tagged_count(&values, per_card::CARD_KEPT_COUNT, Some(non_dealer), "5"),
+        1
+    );
 
     // Non-dealer discarded a 2 to opponent's crib — count is 1.
-    let disc_opp_2 = format!("{}_rank_2", per_card::CARD_DISCARDED_TO_OPP_CRIB_COUNT);
-    assert_eq!(find_count(&values, &disc_opp_2, Some(non_dealer)), 1);
-    let disc_own_2 = format!("{}_rank_2", per_card::CARD_DISCARDED_TO_OWN_CRIB_COUNT);
-    assert_eq!(find_count(&values, &disc_own_2, Some(non_dealer)), 0);
+    assert_eq!(
+        find_tagged_count(
+            &values,
+            per_card::CARD_DISCARDED_TO_OPP_CRIB_COUNT,
+            Some(non_dealer),
+            "2",
+        ),
+        1
+    );
+    assert_eq!(
+        find_tagged_count(
+            &values,
+            per_card::CARD_DISCARDED_TO_OWN_CRIB_COUNT,
+            Some(non_dealer),
+            "2",
+        ),
+        0
+    );
 
     // Dealer discarded a Queen (Q = rank 12) and a Seven to their own crib.
-    let disc_own_q = format!("{}_rank_Q", per_card::CARD_DISCARDED_TO_OWN_CRIB_COUNT);
-    let disc_own_7 = format!("{}_rank_7", per_card::CARD_DISCARDED_TO_OWN_CRIB_COUNT);
-    assert_eq!(find_count(&values, &disc_own_q, Some(dealer)), 1);
-    assert_eq!(find_count(&values, &disc_own_7, Some(dealer)), 1);
+    assert_eq!(
+        find_tagged_count(
+            &values,
+            per_card::CARD_DISCARDED_TO_OWN_CRIB_COUNT,
+            Some(dealer),
+            "Q",
+        ),
+        1
+    );
+    assert_eq!(
+        find_tagged_count(
+            &values,
+            per_card::CARD_DISCARDED_TO_OWN_CRIB_COUNT,
+            Some(dealer),
+            "7",
+        ),
+        1
+    );
 
     // Dealer won — win-when-card-in-crib for Q should be 1 for dealer,
     // 0 for non-dealer (crib belongs to dealer).
-    let win_crib_q = format!("{}_rank_Q", per_card::WIN_WHEN_CARD_IN_CRIB_COUNT);
-    assert_eq!(find_count(&values, &win_crib_q, Some(dealer)), 1);
-    assert_eq!(find_count(&values, &win_crib_q, Some(non_dealer)), 0);
+    assert_eq!(
+        find_tagged_count(
+            &values,
+            per_card::WIN_WHEN_CARD_IN_CRIB_COUNT,
+            Some(dealer),
+            "Q",
+        ),
+        1
+    );
+    assert_eq!(
+        find_tagged_count(
+            &values,
+            per_card::WIN_WHEN_CARD_IN_CRIB_COUNT,
+            Some(non_dealer),
+            "Q",
+        ),
+        0
+    );
 
     // Non-dealer did NOT win — their WIN_WHEN_CARD_IN_HAND_COUNT for
     // any held rank should be 0 despite having held it.
-    let win_hand_5 = format!("{}_rank_5", per_card::WIN_WHEN_CARD_IN_HAND_COUNT);
-    assert_eq!(find_count(&values, &win_hand_5, Some(non_dealer)), 0);
+    assert_eq!(
+        find_tagged_count(
+            &values,
+            per_card::WIN_WHEN_CARD_IN_HAND_COUNT,
+            Some(non_dealer),
+            "5",
+        ),
+        0
+    );
 }
 
 // ---------- Schema consistency ---------------------------------------

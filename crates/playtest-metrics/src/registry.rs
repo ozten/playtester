@@ -183,6 +183,7 @@ mod tests {
             game_id: Uuid::nil(),
             metric_name: "b".into(),
             player: None,
+            tag: None,
             value: MetricValueKind::Count(1),
         }];
         assert!(matches!(
@@ -198,6 +199,7 @@ mod tests {
             game_id: Uuid::nil(),
             metric_name: "a".into(),
             player: None,
+            tag: None,
             value: MetricValueKind::Scalar(1.0),
         }];
         assert!(matches!(
@@ -213,6 +215,7 @@ mod tests {
             game_id: Uuid::nil(),
             metric_name: "a".into(),
             player: Some(1),
+            tag: None,
             value: MetricValueKind::Count(1),
         }];
         assert!(matches!(

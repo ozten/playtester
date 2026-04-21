@@ -77,30 +77,35 @@ pub fn extract(game_id: Uuid, acc: &Accumulator) -> Vec<MetricValue> {
             game_id,
             metric_name: HAND_SCORE_TOTAL.into(),
             player: pid,
+            tag: None,
             value: MetricValueKind::Count(i64::from(hand)),
         });
         out.push(MetricValue {
             game_id,
             metric_name: CRIB_SCORE_TOTAL.into(),
             player: pid,
+            tag: None,
             value: MetricValueKind::Count(i64::from(crib)),
         });
         out.push(MetricValue {
             game_id,
             metric_name: PEGGING_SCORE_TOTAL.into(),
             player: pid,
+            tag: None,
             value: MetricValueKind::Count(i64::from(peg)),
         });
         out.push(MetricValue {
             game_id,
             metric_name: NIBS_CONTRIBUTION.into(),
             player: pid,
+            tag: None,
             value: MetricValueKind::Count(i64::from(nibs)),
         });
         out.push(MetricValue {
             game_id,
             metric_name: DECISIONS_PER_PLAYER.into(),
             player: pid,
+            tag: None,
             value: MetricValueKind::Count(i64::from(decisions)),
         });
 
@@ -118,6 +123,7 @@ pub fn extract(game_id: Uuid, acc: &Accumulator) -> Vec<MetricValue> {
                 game_id,
                 metric_name: PEGGING_SHARE_OF_TOTAL.into(),
                 player: pid,
+                tag: None,
                 value: MetricValueKind::Scalar(share),
             });
         }

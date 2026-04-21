@@ -49,60 +49,48 @@ pub const CRIB_CONTAINED_CARD_COUNT: &str = "crib_contained_card_count";
 /// filtered to games where `player` also won.
 pub const WIN_WHEN_CARD_IN_CRIB_COUNT: &str = "win_when_card_in_crib_count";
 
-/// Metric definitions owned by this module. The actual per-rank values
-/// are emitted as one row per `(player, rank)` pair, using a tag on the
-/// `MetricValue` (the value's `MetricValueKind::Count`). Unit 14's
-/// schema has a `tag` column that stores the rank symbol (`A`..`K`).
-/// Here, because `MetricValue` has no `tag` field yet (that's an ingest
-/// concern), we encode the rank in the metric name itself — a
-/// `_rank_<X>` suffix per rank — so a registry emitting per-card values
-/// still validates cleanly against `metric_definitions()`.
+/// Metric definitions owned by this module. Each base metric is
+/// declared once; per-rank fan-out happens on the emitted
+/// [`MetricValue`]s via the `tag` field (rank symbol: `"A"`, `"2"`,
+/// …, `"K"`). The Unit 14 SQLite schema's `tag` column stores the
+/// rank directly, so the aggregate table can be grouped by rank with
+/// plain SQL.
 #[must_use]
 pub fn definitions() -> Vec<MetricDef> {
-    let mut defs = Vec::with_capacity(13 * 8);
-    for rank in Rank::ALL {
-        defs.push(def(
+    vec![
+        def(
             CARD_DEALT_COUNT,
-            rank,
-            "How many hands this game had the player dealt a card of the given rank.",
-        ));
-        defs.push(def(
+            "How many hands this game had the player dealt a card of the given rank (tag = rank symbol).",
+        ),
+        def(
             CARD_KEPT_COUNT,
-            rank,
             "How many hands this game had the player keep a card of the given rank in their 4-card hand.",
-        ));
-        defs.push(def(
+        ),
+        def(
             CARD_DISCARDED_TO_OWN_CRIB_COUNT,
-            rank,
             "How many hands as dealer the player sent a card of the given rank to their own crib.",
-        ));
-        defs.push(def(
+        ),
+        def(
             CARD_DISCARDED_TO_OPP_CRIB_COUNT,
-            rank,
             "How many hands as non-dealer the player sent a card of the given rank to the opponent's crib.",
-        ));
-        defs.push(def(
+        ),
+        def(
             HAND_CONTAINED_CARD_COUNT,
-            rank,
             "1 if the player ever held a card of the given rank in any 4-card hand this game, else 0.",
-        ));
-        defs.push(def(
+        ),
+        def(
             WIN_WHEN_CARD_IN_HAND_COUNT,
-            rank,
             "1 if the player both held a card of the given rank and won this game, else 0.",
-        ));
-        defs.push(def(
+        ),
+        def(
             CRIB_CONTAINED_CARD_COUNT,
-            rank,
             "1 if the player's crib contained a card of the given rank at any point this game, else 0.",
-        ));
-        defs.push(def(
+        ),
+        def(
             WIN_WHEN_CARD_IN_CRIB_COUNT,
-            rank,
             "1 if the player's crib contained a card of the given rank AND the player won this game, else 0.",
-        ));
-    }
-    defs
+        ),
+    ]
 }
 
 /// Emit per-card values for both players across all 13 ranks. Each
@@ -194,17 +182,13 @@ fn aggregate_ranks(acc: &Accumulator, player: u8) -> RankTotals {
     t
 }
 
-fn def(base: &str, rank: Rank, description: &str) -> MetricDef {
+fn def(base: &str, description: &str) -> MetricDef {
     MetricDef {
-        name: metric_name(base, rank),
+        name: base.into(),
         kind: MetricKind::Count,
         scope: MetricScope::Player,
-        description: format!("{description} (rank {})", rank.symbol()),
+        description: description.into(),
     }
-}
-
-fn metric_name(base: &str, rank: Rank) -> String {
-    format!("{base}_rank_{}", rank.symbol())
 }
 
 fn push_count(
@@ -217,8 +201,9 @@ fn push_count(
 ) {
     out.push(MetricValue {
         game_id,
-        metric_name: metric_name(base, rank),
+        metric_name: base.into(),
         player,
+        tag: Some(rank.symbol().to_string()),
         value: MetricValueKind::Count(i64::from(count)),
     });
 }

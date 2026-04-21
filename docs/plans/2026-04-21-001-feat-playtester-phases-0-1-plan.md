@@ -810,7 +810,7 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
-- [ ] **Unit 14: SQLite ingestion + schema**
+- [x] **Unit 14: SQLite ingestion + schema**
 
 **Goal:** Take a directory of JSONL logs and produce a queryable SQLite database.
 

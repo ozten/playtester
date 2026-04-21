@@ -103,6 +103,7 @@ where
             game_id,
             metric_name: BuiltInMetrics::GAME_LENGTH_TICKS.into(),
             player: None,
+            tag: None,
             value: MetricValueKind::Count(i64::try_from(log.events.len()).unwrap_or(i64::MAX)),
         });
 
@@ -123,18 +124,21 @@ where
             game_id,
             metric_name: BuiltInMetrics::WINNER.into(),
             player: None,
+            tag: None,
             value: MetricValueKind::Tag(winner_tag),
         });
         out.push(MetricValue {
             game_id,
             metric_name: BuiltInMetrics::END_REASON.into(),
             player: None,
+            tag: None,
             value: MetricValueKind::Tag(end_reason_tag),
         });
         out.push(MetricValue {
             game_id,
             metric_name: BuiltInMetrics::SCORE_MARGIN.into(),
             player: None,
+            tag: None,
             value: MetricValueKind::Count(margin),
         });
 
@@ -145,6 +149,7 @@ where
                 game_id,
                 metric_name: BuiltInMetrics::AGENT_NAME.into(),
                 player: Some(player),
+                tag: None,
                 value: MetricValueKind::Tag(name.clone()),
             });
         }
@@ -156,6 +161,7 @@ where
                     game_id,
                     metric_name: BuiltInMetrics::FINAL_SCORE.into(),
                     player: Some(player),
+                    tag: None,
                     value: MetricValueKind::Count(i64::from(score)),
                 });
             }
@@ -172,6 +178,7 @@ where
                 game_id,
                 metric_name: BuiltInMetrics::WALL_CLOCK_MS.into(),
                 player: None,
+                tag: None,
                 value: MetricValueKind::Count(value),
             });
         }
@@ -180,7 +187,7 @@ where
     }
 }
 
-fn reason_tag(reason: &playtest_core::EndReason) -> String {
+pub(crate) fn reason_tag(reason: &playtest_core::EndReason) -> String {
     match reason {
         playtest_core::EndReason::Victory => "victory".into(),
         playtest_core::EndReason::Draw => "draw".into(),
