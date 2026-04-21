@@ -12,11 +12,11 @@ workspace = true
 [dependencies]
 playtest-core.workspace = true
 playtest-log.workspace = true
+playtest-ports.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-playtest-ports.workspace = true
 tempfile = "3"

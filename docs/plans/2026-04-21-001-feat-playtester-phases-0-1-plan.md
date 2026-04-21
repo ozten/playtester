@@ -708,6 +708,43 @@ SQL queries  --[format]-->  markdown report
 
 ---
 
+- [ ] **Unit 12b: Log schema bump — `finished_at` + `wall_clock_ms`**
+
+**Goal:** Close the gap left by Unit 12: `wall_clock_ms` was listed as a built-in metric but skipped because the Final record has no end timestamp. This unit extends the log schema and wires the built-in metric through. Lands before Unit 13 so the Cribbage fixtures committed in Unit 13 are already in schema v2.
+
+**Requirements:** R1.2, R1.3
+
+**Dependencies:** Unit 12
+
+**Files:**
+- Modify: `crates/playtest-log/src/header.rs` — bump `SCHEMA_VERSION` from `1` to `2`
+- Modify: `crates/playtest-log/src/record.rs` — add `finished_at: UnixMillis` to the `Final` variant (with `#[serde(default)]` so any in-flight v1 logs still parse, defaulting to `0`)
+- Modify: `crates/playtest-log/src/writer.rs` — `EventLogWriter::finish(result, finished_at)` takes the end timestamp explicitly (writer stays clock-free; caller owns the `Clock` port, matching Unit 6's separation of concerns)
+- Modify: `crates/playtest-cli/src/commands/play.rs` — capture `clock.now()` immediately before calling `finish()`
+- Modify: `crates/playtest-metrics/src/log.rs` — surface `finished_at` on `GameLog` so extractors can read it
+- Modify: `crates/playtest-metrics/src/builtin.rs` — register and emit `wall_clock_ms`; drop the "deferred" comment
+- Modify: existing writer/replay/soak tests that construct a `Final` record or call `finish()`
+
+**Approach:**
+- The writer-owned contract (Unit 6) is that `finish()` both writes the final record and flushes the sink. Adding an explicit `finished_at` parameter keeps the writer free of the `Clock` port while making "when did the game end" an explicit caller responsibility — the same pattern as `LogHeader::started_at`.
+- `wall_clock_ms = max(0, finished_at - started_at)` as a single scalar on the game, not per-player. Absent final record → metric absent (not `0`), consistent with the existing `SCORE_MARGIN` handling of unfinished games.
+- Schema bump from `1` to `2` is a hard break for replay per the Phase 0 "playback refuses mismatched versions" contract — soak tests must regenerate any committed logs. Acceptable because no external consumers exist yet.
+
+**Test scenarios:**
+- Happy path: v2 writer produces a `Final` line that contains `"finished_at"` and parses back with the right millisecond value
+- Happy path: `BuiltInMetrics::extract` over a log with `started_at=1000`, `finished_at=1420` emits a `wall_clock_ms` metric of `420`
+- Edge case: log with no final record → no `wall_clock_ms` metric emitted (parity with `final_score`)
+- Edge case: `finished_at < started_at` (clock skew / stub clock) → clamped to `0`, not negative
+- Backward-compat: a `Final` line written without `finished_at` deserializes to `finished_at = 0` (serde default), and `BuiltInMetrics` skips the metric for that game
+
+**Verification:**
+- `SCHEMA_VERSION == 2` in the log crate
+- `BuiltInMetrics::metric_definitions()` now includes `wall_clock_ms`
+- All existing `cargo test --workspace` tests pass after the signature change to `finish()`
+- The deferred comment at the top of `builtin.rs` naming `wall_clock_ms` is removed
+
+---
+
 - [ ] **Unit 13: Cribbage-specific metrics**
 
 **Goal:** Define and implement the metrics that only make sense for Cribbage, including the reframed per-card design-insight metrics (R1.5) that replace the roadmap's CCG-shaped "per-card" metrics for a fixed-deck game.

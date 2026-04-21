@@ -2,13 +2,12 @@
 //! these up automatically — no game crate needs to redeclare them.
 //!
 //! These come from pieces of the log that every game emits: the
-//! header (seed, agent names), the event stream's length, and the
-//! final record (winner, scores). Metrics that *would* be nice to
-//! include but require game-specific or schema-extending information
-//! are deliberately deferred:
+//! header (seed, agent names, `started_at`), the event stream's
+//! length, and the final record (winner, scores, `finished_at`).
 //!
-//! - `wall_clock_ms` — needs a `finished_at` field in the Final record,
-//!   or per-event timestamps. Neither exists yet.
+//! One built-in is still game-specific and deferred to the owning
+//! game crate:
+//!
 //! - `decisions_per_player` — needs to distinguish player-action
 //!   events from engine events, which is game-specific (Cribbage's
 //!   `PegPlayed` / `DiscardToCrib` / `Go` vs `DealCard` / `PegScored`).
@@ -34,6 +33,7 @@ impl BuiltInMetrics {
     pub const SCORE_MARGIN: &'static str = "score_margin";
     pub const AGENT_NAME: &'static str = "agent_name";
     pub const FINAL_SCORE: &'static str = "final_score";
+    pub const WALL_CLOCK_MS: &'static str = "wall_clock_ms";
 }
 
 impl<G: Game> MetricRegistry<G> for BuiltInMetrics
@@ -82,6 +82,14 @@ where
                 scope: MetricScope::Player,
                 description:
                     "Final score for this player (signed; games may allow negative scores). 0 if no final record."
+                        .into(),
+            },
+            MetricDef {
+                name: BuiltInMetrics::WALL_CLOCK_MS.into(),
+                kind: MetricKind::Count,
+                scope: MetricScope::Game,
+                description:
+                    "Wall-clock duration of the game in milliseconds (finished_at - started_at). Absent when the log has no final record or was written under schema v1 (no finished_at field)."
                         .into(),
             },
         ]
@@ -151,6 +159,21 @@ where
                     value: MetricValueKind::Count(i64::from(score)),
                 });
             }
+        }
+
+        // wall_clock_ms = finished_at - started_at, clamped at 0 to guard
+        // against clock skew or a stub clock that ran backwards. Emitted
+        // only when the log carries a finished_at (v2+ with a final
+        // record); absent otherwise, matching final_score's behavior.
+        if let Some(finished_at) = log.finished_at {
+            let duration = finished_at.saturating_sub(log.header.started_at);
+            let value = i64::try_from(duration).unwrap_or(i64::MAX);
+            out.push(MetricValue {
+                game_id,
+                metric_name: BuiltInMetrics::WALL_CLOCK_MS.into(),
+                player: None,
+                value: MetricValueKind::Count(value),
+            });
         }
 
         out

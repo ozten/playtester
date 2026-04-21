@@ -11,7 +11,13 @@ use sha2::{Digest, Sha256};
 
 /// Current event-log schema version. Bump when `LogRecord` shape
 /// changes in a way prior logs cannot be read under.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// - `1` — initial shape: header + events + `Final { winner, reason, scores }`
+/// - `2` — adds `finished_at` to the `Final` record so `wall_clock_ms`
+///   can be derived. Old v1 logs without `finished_at` deserialize
+///   with `finished_at = 0` (serde default), and replay rejects any
+///   `schema != 2` log outright.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Everything needed to verify and replay a log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -57,13 +57,17 @@ impl Game for TestGame {
 // ---------- Helpers ------------------------------------------------------
 
 fn header_with_agents(seed: u64, agents: Vec<String>) -> LogHeader {
+    header_with(seed, agents, 0)
+}
+
+fn header_with(seed: u64, agents: Vec<String>, started_at: u64) -> LogHeader {
     LogHeader {
         schema: SCHEMA_VERSION,
         game: "testgame".into(),
         version: "0.0.0".into(),
         seed,
         agents,
-        started_at: 0,
+        started_at,
         config_hash: "0".repeat(64),
     }
 }
@@ -78,8 +82,19 @@ fn build_log(
     events: Vec<TestEvent>,
     final_result: Option<GameResult>,
 ) -> GameLog<TestGame> {
+    build_log_with_timing(seed, agents, events, final_result, 0, 0)
+}
+
+fn build_log_with_timing(
+    seed: u64,
+    agents: Vec<String>,
+    events: Vec<TestEvent>,
+    final_result: Option<GameResult>,
+    started_at: u64,
+    finished_at: u64,
+) -> GameLog<TestGame> {
     let mut records: Vec<Result<LogRecord<TestEvent>, playtest_log::ReadError>> = Vec::new();
-    records.push(Ok(LogRecord::Header(header_with_agents(seed, agents))));
+    records.push(Ok(LogRecord::Header(header_with(seed, agents, started_at))));
     for (tick, payload) in events.into_iter().enumerate() {
         records.push(Ok(LogRecord::Event {
             tick: tick as u64,
@@ -91,6 +106,7 @@ fn build_log(
             winner: res.winner,
             reason: res.reason,
             scores: res.scores,
+            finished_at,
         }));
     }
     GameLog::<TestGame>::from_records(records).expect("log builds cleanly")
@@ -111,6 +127,7 @@ fn builtin_metrics_definitions_are_internally_consistent() {
         BuiltInMetrics::SCORE_MARGIN,
         BuiltInMetrics::AGENT_NAME,
         BuiltInMetrics::FINAL_SCORE,
+        BuiltInMetrics::WALL_CLOCK_MS,
     ] {
         assert!(defs.iter().any(|d| d.name == name), "missing def: {name}");
     }
@@ -364,6 +381,96 @@ fn registry_definitions_match_emitted_values_across_three_log_shapes() {
         let values = BuiltInMetrics.extract(Uuid::new_v4(), log);
         validate_values_against_defs(&defs, &values).unwrap_or_else(|e| panic!("fixture {i}: {e}"));
     }
+}
+
+#[test]
+fn wall_clock_ms_is_finished_at_minus_started_at() {
+    let log = build_log_with_timing(
+        0,
+        vec!["a".into(), "b".into()],
+        vec![],
+        Some(GameResult {
+            winner: Some(0),
+            reason: EndReason::Victory,
+            scores: vec![121, 98],
+        }),
+        1_000,
+        1_420,
+    );
+    let values = BuiltInMetrics.extract(Uuid::nil(), &log);
+    let wall = values
+        .iter()
+        .find(|v| v.metric_name == BuiltInMetrics::WALL_CLOCK_MS)
+        .expect("wall_clock_ms emitted");
+    assert_eq!(wall.value, MetricValueKind::Count(420));
+    assert_eq!(wall.player, None);
+}
+
+#[test]
+fn wall_clock_ms_absent_when_no_final_record() {
+    let log = build_log(
+        0,
+        vec!["a".into(), "b".into()],
+        (0..3).map(|i| event(&format!("e{i}"))).collect(),
+        None,
+    );
+    let values = BuiltInMetrics.extract(Uuid::nil(), &log);
+    assert!(
+        values
+            .iter()
+            .all(|v| v.metric_name != BuiltInMetrics::WALL_CLOCK_MS),
+        "wall_clock_ms should be absent without a Final record"
+    );
+}
+
+#[test]
+fn wall_clock_ms_clamps_to_zero_on_backwards_clock() {
+    // Stub clocks or tape divergence can produce finished_at < started_at.
+    // The metric clamps rather than emitting a nonsense negative number.
+    let log = build_log_with_timing(
+        0,
+        vec!["a".into(), "b".into()],
+        vec![],
+        Some(GameResult {
+            winner: Some(0),
+            reason: EndReason::Victory,
+            scores: vec![121, 0],
+        }),
+        2_000,
+        1_000,
+    );
+    let values = BuiltInMetrics.extract(Uuid::nil(), &log);
+    let wall = values
+        .iter()
+        .find(|v| v.metric_name == BuiltInMetrics::WALL_CLOCK_MS)
+        .expect("wall_clock_ms emitted");
+    assert_eq!(wall.value, MetricValueKind::Count(0));
+}
+
+#[test]
+fn wall_clock_ms_absent_for_v1_log_without_finished_at() {
+    // Backward-compat: a v1 log has `finished_at: 0` via serde default;
+    // GameLog::load maps that to `finished_at: None`, and the metric
+    // stays absent rather than being misreported as "0 ms".
+    let log = build_log_with_timing(
+        0,
+        vec!["a".into(), "b".into()],
+        vec![],
+        Some(GameResult {
+            winner: Some(0),
+            reason: EndReason::Victory,
+            scores: vec![121, 98],
+        }),
+        1_000,
+        0, // simulates the v1 default
+    );
+    let values = BuiltInMetrics.extract(Uuid::nil(), &log);
+    assert!(
+        values
+            .iter()
+            .all(|v| v.metric_name != BuiltInMetrics::WALL_CLOCK_MS),
+        "wall_clock_ms should be absent when finished_at was the v1 default"
+    );
 }
 
 #[test]

@@ -112,6 +112,7 @@ where
                 winner,
                 reason,
                 scores,
+                ..
             } => {
                 r.result = Some(GameResult {
                     winner,
@@ -158,6 +159,7 @@ where
                 winner,
                 reason,
                 scores,
+                ..
             } => {
                 r.result = Some(GameResult {
                     winner,

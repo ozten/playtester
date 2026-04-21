@@ -3,13 +3,14 @@
 //! Wire format (JSONL, one record per line):
 //!
 //! ```text
-//! {"kind":"header","schema":1,"game":"cribbage","version":"0.1.0", ...}
+//! {"kind":"header","schema":2,"game":"cribbage","version":"0.1.0", ...}
 //! {"kind":"event","tick":0,"payload":{"DealCard":{"player":0,"card":"AH"}}}
 //! ...
-//! {"kind":"final","winner":0,"reason":"Victory","scores":[121,98]}
+//! {"kind":"final","winner":0,"reason":"Victory","scores":[121,98],"finished_at":1712345678901}
 //! ```
 
 use playtest_core::{EndReason, GameResult, PlayerId};
+use playtest_ports::UnixMillis;
 use serde::{Deserialize, Serialize};
 
 use crate::header::LogHeader;
@@ -29,27 +30,37 @@ pub enum LogRecord<E> {
     /// Last line of every completed log. Present at most once; missing
     /// if the game crashed mid-play (the log can still be replayed up
     /// to the last committed event).
+    ///
+    /// `finished_at` is the wall-clock time the game ended, in Unix
+    /// epoch milliseconds (from the [`Clock`](playtest_ports::Clock)
+    /// port). Paired with [`LogHeader::started_at`] it yields the
+    /// `wall_clock_ms` built-in metric. Defaults to `0` when missing
+    /// (e.g. v1 logs written before the field existed).
     Final {
         winner: Option<PlayerId>,
         reason: EndReason,
         scores: Vec<i32>,
+        #[serde(default)]
+        finished_at: UnixMillis,
     },
 }
 
 impl<E> LogRecord<E> {
-    /// Build a `Final` record from a `GameResult`. Keeps callers from
-    /// reaching into the enum's fields.
+    /// Build a `Final` record from a `GameResult` and the wall-clock
+    /// timestamp captured when the loop finished.
     #[must_use]
-    pub fn final_from_result(result: &GameResult) -> Self {
+    pub fn final_from_result(result: &GameResult, finished_at: UnixMillis) -> Self {
         Self::Final {
             winner: result.winner,
             reason: result.reason.clone(),
             scores: result.scores.clone(),
+            finished_at,
         }
     }
 
     /// Inverse of [`Self::final_from_result`] — pull a `GameResult` out
-    /// of a `Final` record.
+    /// of a `Final` record. Discards `finished_at`; callers that need it
+    /// should destructure the enum directly.
     #[must_use]
     pub fn as_result(&self) -> Option<GameResult> {
         match self {
@@ -57,6 +68,7 @@ impl<E> LogRecord<E> {
                 winner,
                 reason,
                 scores,
+                ..
             } => Some(GameResult {
                 winner: *winner,
                 reason: reason.clone(),
@@ -114,8 +126,29 @@ mod tests {
             reason: EndReason::Victory,
             scores: vec![98, 121],
         };
-        let rec: LogRecord<Ping> = LogRecord::final_from_result(&orig);
+        let rec: LogRecord<Ping> = LogRecord::final_from_result(&orig, 1_700_000_001_234);
         let back = rec.as_result().unwrap();
         assert_eq!(back, orig);
+        // `finished_at` survives a JSON round-trip so metrics can read it.
+        let line = serde_json::to_string(&rec).unwrap();
+        assert!(line.contains("\"finished_at\":1700000001234"));
+        let back_rec: LogRecord<Ping> = serde_json::from_str(&line).unwrap();
+        match back_rec {
+            LogRecord::Final { finished_at, .. } => assert_eq!(finished_at, 1_700_000_001_234),
+            _ => panic!("expected Final"),
+        }
+    }
+
+    #[test]
+    fn final_record_without_finished_at_defaults_to_zero() {
+        // Backward-compat: a Final line written by v1 code (no
+        // `finished_at` field) must still parse — wall_clock_ms for
+        // those logs will be absent rather than poisoned.
+        let v1_line = r#"{"kind":"final","winner":0,"reason":"Victory","scores":[121,98]}"#;
+        let rec: LogRecord<Ping> = serde_json::from_str(v1_line).unwrap();
+        match rec {
+            LogRecord::Final { finished_at, .. } => assert_eq!(finished_at, 0),
+            _ => panic!("expected Final"),
+        }
     }
 }

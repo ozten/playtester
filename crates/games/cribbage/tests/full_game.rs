@@ -106,6 +106,8 @@ async fn replay_reproduces_final_state_of_a_random_game() {
                 winner: result.winner,
                 reason: result.reason.clone(),
                 scores: result.scores.clone(),
+                // Test log; deterministic timestamp keeps bytes stable.
+                finished_at: 0,
             })
             .unwrap();
             sink.emit(&final_line).unwrap();

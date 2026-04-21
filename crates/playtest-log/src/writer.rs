@@ -11,7 +11,7 @@
 use core::marker::PhantomData;
 
 use playtest_core::GameResult;
-use playtest_ports::{GameEventSink, GameEventSinkError};
+use playtest_ports::{GameEventSink, GameEventSinkError, UnixMillis};
 use serde::Serialize;
 
 use crate::header::LogHeader;
@@ -115,16 +115,22 @@ impl<'s, E: Serialize> EventLogWriter<'s, E> {
     ///
     /// Matches the plan's "finish() writes Final *and* calls flush()"
     /// contract so a soak-test crash cannot leave a half-written log.
+    /// `finished_at` is the wall-clock time the loop ended, captured by
+    /// the caller via the `Clock` port — the writer stays clock-free.
     ///
     /// # Errors
     /// See [`WriteError`].
-    pub fn finish(&mut self, result: &GameResult) -> Result<(), WriteError> {
+    pub fn finish(
+        &mut self,
+        result: &GameResult,
+        finished_at: UnixMillis,
+    ) -> Result<(), WriteError> {
         match self.state {
             State::Fresh => return Err(WriteError::HeaderNotWritten),
             State::Finished => return Err(WriteError::AlreadyFinished),
             State::HeaderWritten => {}
         }
-        let rec: LogRecord<E> = LogRecord::final_from_result(result);
+        let rec: LogRecord<E> = LogRecord::final_from_result(result, finished_at);
         self.emit(&rec)?;
         self.sink.flush()?;
         self.state = State::Finished;
@@ -186,16 +192,24 @@ mod tests {
         writer.write_event(0, &Ping { n: 1 }).unwrap();
         writer.write_event(1, &Ping { n: 2 }).unwrap();
         writer
-            .finish(&GameResult {
-                winner: Some(0),
-                reason: EndReason::Victory,
-                scores: vec![2, 0],
-            })
+            .finish(
+                &GameResult {
+                    winner: Some(0),
+                    reason: EndReason::Victory,
+                    scores: vec![2, 0],
+                },
+                1_700_000_000_420,
+            )
             .unwrap();
         assert_eq!(sink.lines.len(), 4);
         assert!(sink.lines[0].contains("\"kind\":\"header\""));
         assert!(sink.lines[1].contains("\"kind\":\"event\""));
         assert!(sink.lines[3].contains("\"kind\":\"final\""));
+        assert!(
+            sink.lines[3].contains("\"finished_at\":1700000000420"),
+            "final line missing finished_at: {}",
+            sink.lines[3]
+        );
         assert!(sink.flushed);
     }
 
@@ -222,11 +236,14 @@ mod tests {
         let mut writer: EventLogWriter<Ping> = EventLogWriter::new(&mut sink);
         writer.write_header(&sample_header()).unwrap();
         writer
-            .finish(&GameResult {
-                winner: None,
-                reason: EndReason::Draw,
-                scores: vec![],
-            })
+            .finish(
+                &GameResult {
+                    winner: None,
+                    reason: EndReason::Draw,
+                    scores: vec![],
+                },
+                0,
+            )
             .unwrap();
         let err = writer.write_event(0, &Ping { n: 1 }).unwrap_err();
         assert!(matches!(err, WriteError::AlreadyFinished));

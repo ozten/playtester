@@ -113,6 +113,7 @@ mod tests {
             winner: None,
             reason: playtest_core::EndReason::Draw,
             scores: vec![],
+            finished_at: 0,
         };
         buf.push_str(&serde_json::to_string(&fin).unwrap());
         buf.push('\n');
@@ -153,6 +154,7 @@ mod tests {
             winner: None,
             reason: playtest_core::EndReason::Draw,
             scores: vec![],
+            finished_at: 0,
         };
         buf.push_str(&serde_json::to_string(&fin).unwrap());
         buf.push('\n');

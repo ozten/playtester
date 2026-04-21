@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use playtest_core::{Game, GameResult};
 use playtest_log::{LogHeader, LogReader, LogRecord, ReadError};
+use playtest_ports::UnixMillis;
 use serde::de::DeserializeOwned;
 
 /// Errors raised while loading a [`GameLog`].
@@ -47,6 +48,11 @@ pub struct GameLog<G: Game> {
     /// useful for post-mortem on crashed games, but most registries
     /// will refuse to score a truncated game.
     pub final_result: Option<GameResult>,
+    /// Wall-clock time the game ended, in Unix epoch ms. Lifted off the
+    /// `Final` record (schema v2+); `None` when the final record is
+    /// absent or when a v1 log — which had no `finished_at` — parsed
+    /// through the `#[serde(default)]` path and came back as `0`.
+    pub finished_at: Option<UnixMillis>,
 }
 
 impl<G: Game> GameLog<G>
@@ -81,6 +87,7 @@ where
         let mut header: Option<LogHeader> = None;
         let mut events: Vec<G::Event> = Vec::new();
         let mut final_result: Option<GameResult> = None;
+        let mut finished_at: Option<UnixMillis> = None;
 
         for rec in records {
             match rec? {
@@ -95,6 +102,7 @@ where
                     winner,
                     reason,
                     scores,
+                    finished_at: fa,
                 } => {
                     if final_result.is_some() {
                         return Err(LoadError::DuplicateFinal);
@@ -104,6 +112,9 @@ where
                         reason,
                         scores,
                     });
+                    // `0` means "v1 log via serde default" — treat as
+                    // absent so metrics can skip wall_clock_ms cleanly.
+                    finished_at = if fa == 0 { None } else { Some(fa) };
                 }
             }
         }
@@ -112,6 +123,7 @@ where
             header: header.ok_or(LoadError::MissingHeader)?,
             events,
             final_result,
+            finished_at,
         })
     }
 }

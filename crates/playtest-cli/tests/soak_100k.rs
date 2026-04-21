@@ -104,6 +104,10 @@ fn one_hundred_thousand_games_panic_free_and_sample_logs_replay_cleanly() {
                 winner: result.winner,
                 reason: result.reason.clone(),
                 scores: result.scores.clone(),
+                // Soak uses `started_at: 0`; keep finished_at fixed for
+                // byte-stable logs. Real wall-clock time would make the
+                // sampled logs non-deterministic across runs.
+                finished_at: 0,
             })
             .expect("serialize final");
             sink.emit(&final_line).expect("emit final");

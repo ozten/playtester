@@ -169,10 +169,20 @@ fn run_cribbage(
         rt.block_on(loop_.run(agents.as_mut_slice(), &mut chance_rng, &mut sink))?
     };
 
+    // Capture finish time the same way started_at was captured: honor
+    // --fixed-time when set so deterministic runs produce identical
+    // bytes end-to-end. Otherwise read from the production clock.
+    let finished_at = if let Some(t) = fixed_time {
+        t
+    } else {
+        ProductionClock::new().now()
+    };
+
     let final_line = serde_json::to_string(&LogRecord::<CribbageEvent>::Final {
         winner: result.winner,
         reason: result.reason,
         scores: result.scores,
+        finished_at,
     })?;
     sink.emit(&final_line)?;
     sink.flush()?;

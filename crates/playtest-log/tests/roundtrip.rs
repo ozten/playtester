@@ -133,11 +133,14 @@ fn write_sample_log(path: &Path, num_events: u64, include_final: bool, cfg: &Tal
         }
         if include_final {
             writer
-                .finish(&GameResult {
-                    winner: None,
-                    reason: EndReason::Draw,
-                    scores: vec![0, 0],
-                })
+                .finish(
+                    &GameResult {
+                        winner: None,
+                        reason: EndReason::Draw,
+                        scores: vec![0, 0],
+                    },
+                    0,
+                )
                 .unwrap();
         }
     }
@@ -344,6 +347,7 @@ fn game_loop_log_round_trips_through_replay() {
                 winner: result.winner,
                 reason: result.reason.clone(),
                 scores: result.scores.clone(),
+                finished_at: 0,
             })
             .unwrap();
             sink.emit(&final_line).unwrap();
