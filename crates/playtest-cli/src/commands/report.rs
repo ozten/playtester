@@ -8,8 +8,8 @@
 //! without re-reading the event logs.
 //!
 //! The command dispatches on `--game` the same way `play` and
-//! `replay` do — see [`crate::game_registry`]. Generic sections
-//! (Summary, Per-agent) come from `playtest_metrics::reporter`;
+//! `replay` do — see [`playtest_registry::game_registry`]. Generic
+//! sections (Summary, Per-agent) come from `playtest_metrics::reporter`;
 //! game-specific sections come from the game crate (e.g.
 //! `playtest_cribbage::report`).
 
@@ -21,9 +21,8 @@ use playtest_cribbage::{CribbageGame, CribbageMetrics};
 use playtest_metrics::{
     MarkdownBuilder, ingest_directory, init_schema, write_per_agent_section, write_summary_section,
 };
+use playtest_registry::game_registry::{RegisteredGame, lookup as lookup_game};
 use rusqlite::Connection;
-
-use crate::game_registry::{RegisteredGame, lookup as lookup_game};
 
 /// CLI flags for the `report` subcommand.
 #[derive(Debug, ClapArgs)]

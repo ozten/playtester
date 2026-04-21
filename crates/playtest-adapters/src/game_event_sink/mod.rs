@@ -5,10 +5,12 @@
 //! errors on use. See the three-categories-of-recording doc in
 //! [`playtest_ports`] for why.
 
+pub mod broadcast;
 pub mod playback;
 pub mod production;
 pub mod stub;
 
+pub use broadcast::BroadcastGameEventSink;
 pub use playback::PlaybackGameEventSink;
 pub use production::ProductionGameEventSink;
 pub use stub::StubGameEventSink;

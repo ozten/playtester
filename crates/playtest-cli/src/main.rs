@@ -1,5 +1,5 @@
-//! `playtest` binary: subcommand dispatch for `play`, `replay`, and
-//! `report`.
+//! `playtest` binary: subcommand dispatch for `play`, `replay`,
+//! `report`, and `serve`.
 //!
 //! The CLI uses [`anyhow::Result`] at the binary boundary and
 //! propagates the [`thiserror`]-based errors from the libraries
@@ -8,9 +8,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-mod agent_registry;
 mod commands;
-mod game_registry;
 
 #[derive(Parser)]
 #[command(
@@ -33,6 +31,9 @@ enum Command {
 
     /// Ingest a directory of event logs and write a markdown report.
     Report(commands::report::ReportArgs),
+
+    /// Start the HTTP + SSE server.
+    Serve(commands::serve::ServeArgs),
 }
 
 fn main() -> Result<()> {
@@ -41,5 +42,6 @@ fn main() -> Result<()> {
         Command::Play(args) => commands::play::run(args),
         Command::Replay(args) => commands::replay::run(args),
         Command::Report(args) => commands::report::run(args),
+        Command::Serve(args) => commands::serve::run(args),
     }
 }

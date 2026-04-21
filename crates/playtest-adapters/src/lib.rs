@@ -19,7 +19,8 @@ pub mod rng;
 pub use clock::{PlaybackClock, ProductionClock, RecordClock, StubClock};
 pub use filesystem::{PlaybackFileSystem, ProductionFileSystem, RecordFileSystem, StubFileSystem};
 pub use game_event_sink::{
-    PlaybackGameEventSink, ProductionGameEventSink, RecordGameEventSink, StubGameEventSink,
+    BroadcastGameEventSink, PlaybackGameEventSink, ProductionGameEventSink, RecordGameEventSink,
+    StubGameEventSink,
 };
 pub use llm_client::{PlaybackLlmClient, ProductionLlmClient, RecordLlmClient, StubLlmClient};
 pub use recording::{SCHEMA_VERSION, TapeError, TapeReader, TapeWriter};

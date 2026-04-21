@@ -38,6 +38,12 @@ pub enum ApiErrorCode {
     /// An unexpected server-side failure. The `message` is safe to
     /// show users; `details` (if populated) is meant for operators.
     Internal,
+
+    /// The endpoint is scaffolded but not yet implemented. Used for
+    /// routes shipped as stubs ahead of their full implementation
+    /// (e.g. `/api/reports` in Unit 17, proper implementation deferred
+    /// to a later unit).
+    NotImplemented,
 }
 
 /// Uniform error body, shared by every endpoint.
@@ -96,5 +102,6 @@ pub fn http_status(code: ApiErrorCode) -> u16 {
         | ApiErrorCode::InvalidPaginationParams => 400,
         ApiErrorCode::RunNotFound | ApiErrorCode::GameNotFound => 404,
         ApiErrorCode::Internal => 500,
+        ApiErrorCode::NotImplemented => 501,
     }
 }
