@@ -32,6 +32,34 @@ watch AI-vs-AI runs. That's fixed. The minimum interactive slice is on
 - Regenerated [`docs/openapi.json`](../openapi.json) — rerun
   `openapi-typescript` on it for typed client bindings.
 
+## Running a server locally
+
+Everything below assumes localhost. Clone `playtester`, then:
+
+```sh
+cargo run --release -p playtest-cli -- serve
+```
+
+Binds `127.0.0.1:7878`. First build takes a few minutes (release
+profile); subsequent starts are instant. Ctrl-C to stop.
+
+Sanity-check with:
+
+```sh
+curl -s localhost:7878/api/health
+# => {"api_version":"1.1.0","data":{"status":"ok","api_version":"1.1.0"},"errors":[]}
+```
+
+No auth, no TLS — this is a single-user dev surface.
+
+**CORS is not configured.** If the SvelteKit dev server runs on a
+different origin (e.g. Vite on `:5173`), the browser will block
+cross-origin requests. Easiest workaround: proxy through Vite —
+`server.proxy: { '/api': 'http://localhost:7878' }` in
+`vite.config.ts`, which also makes the SSE stream same-origin. If you
+need real cross-origin CORS for some reason, ping me and I'll add a
+permissive dev-only CORS layer behind a flag.
+
 ## Minimum worked example
 
 ```text
