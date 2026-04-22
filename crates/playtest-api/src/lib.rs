@@ -33,7 +33,9 @@ pub mod sse;
 pub mod version;
 
 pub use error::{ApiError, ApiErrorCode, http_status};
-pub use games::{EventPage, GameMetadata, GameSummary, LogLineDto};
+pub use games::{
+    EventPage, GameMetadata, GameSummary, LogLineDto, SubmitActionBody, SubmitActionResponse,
+};
 pub use registry::{AgentRegistryEntry, GameRegistryEntry};
 pub use runs::{CreateRunRequest, RunStatus, RunSummary};
 pub use sse::{SseFrame, TurnPromptPayload};

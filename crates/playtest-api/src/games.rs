@@ -88,3 +88,37 @@ pub struct EventPage {
     /// The page's records, in on-disk order.
     pub events: Vec<LogLineDto>,
 }
+
+/// Body of `POST /api/runs/{run_id}/games/{game_id}/actions` — the
+/// inbound path Phase 2.5 introduces for browser-driven play.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SubmitActionBody {
+    /// Zero-based seat index the action is for. Must match the seat
+    /// of the currently-pending prompt.
+    pub seat: u8,
+
+    /// The `prompt_id` from the `turn_prompt` frame being answered.
+    /// Prevents stale submissions after the game has advanced.
+    pub prompt_id: u64,
+
+    /// Zero-based index into the prompt's `legal_actions` list.
+    pub action_index: u32,
+}
+
+/// Response body of a successful action submission. Minimal by design
+/// — the next `event` frame on the SSE stream is the meaningful
+/// signal that the submission was applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SubmitActionResponse {
+    /// Always `true` on a 200 response; kept so the shape is a JSON
+    /// object rather than a bare `null`.
+    pub accepted: bool,
+}
+
+impl SubmitActionResponse {
+    /// The standard success body for a submitted action.
+    #[must_use]
+    pub fn ok() -> Self {
+        Self { accepted: true }
+    }
+}

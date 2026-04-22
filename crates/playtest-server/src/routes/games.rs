@@ -17,12 +17,12 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header::HeaderValue},
     response::sse::{Event, KeepAlive, Sse},
-    routing::get,
+    routing::{get, post},
 };
 use futures::Stream;
 use playtest_api::{
     ApiError, ApiErrorCode, ApiResponse, EventPage, GameMetadata, GameSummary, LogLineDto,
-    SseFrame,
+    SseFrame, SubmitActionBody, SubmitActionResponse,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -33,7 +33,7 @@ use std::sync::Arc;
 use crate::routes::{ApiResult, api_error};
 use crate::sse::line_to_sse_frame;
 use crate::state::AppState;
-use crate::turn_coordinator::TurnCoordinator;
+use crate::turn_coordinator::{SubmitError, TurnCoordinator};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -41,6 +41,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/runs/{id}/games/{gid}", get(get_game))
         .route("/api/runs/{id}/games/{gid}/events", get(list_events))
         .route("/api/runs/{id}/games/{gid}/stream", get(game_stream))
+        .route(
+            "/api/runs/{id}/games/{gid}/actions",
+            post(submit_action),
+        )
 }
 
 async fn list_games(
@@ -454,6 +458,93 @@ async fn build_game_stream(
             }
         }
     }
+}
+
+async fn submit_action(
+    State(state): State<AppState>,
+    Path((id, gid)): Path<(String, String)>,
+    Json(body): Json<SubmitActionBody>,
+) -> ApiResult<SubmitActionResponse> {
+    let run_id = parse_run_id(&id)?;
+
+    let coord: Arc<TurnCoordinator> = state
+        .active_runs
+        .get(&run_id)
+        .ok_or_else(|| {
+            api_error(ApiError::new(
+                ApiErrorCode::RunNotFound,
+                format!("no run with id {id}"),
+            ))
+        })?
+        .turn_coordinators
+        .get(&gid)
+        .ok_or_else(|| {
+            api_error(ApiError::new(
+                ApiErrorCode::GameNotFound,
+                format!("no interactive game {gid} in run {id}"),
+            ))
+        })?
+        .value()
+        .clone();
+
+    let action_index = usize::try_from(body.action_index).map_err(|_| {
+        api_error(ApiError::new(
+            ApiErrorCode::IllegalActionIndex,
+            format!("action_index {} does not fit in usize", body.action_index),
+        ))
+    })?;
+
+    match coord.submit(body.seat, body.prompt_id, action_index) {
+        Ok(()) => Ok(Json(ApiResponse::ok(SubmitActionResponse::ok()))),
+        Err(err) => Err(submit_error_to_api(&err)),
+    }
+}
+
+fn submit_error_to_api(err: &SubmitError) -> (StatusCode, Json<ApiResponse<()>>) {
+    let (code, msg, details) = match err {
+        SubmitError::NoRemoteAgentAtSeat => (
+            ApiErrorCode::NoRemoteAgentAtSeat,
+            "no remote agent at this seat".to_owned(),
+            None,
+        ),
+        SubmitError::NotYourTurn => (
+            ApiErrorCode::NotYourTurn,
+            "no prompt pending for this seat".to_owned(),
+            None,
+        ),
+        SubmitError::StaleTick {
+            submitted,
+            expected,
+        } => (
+            ApiErrorCode::StaleTick,
+            format!("prompt_id mismatch (submitted={submitted}, expected={expected})"),
+            Some(serde_json::json!({
+                "submitted_prompt_id": submitted,
+                "expected_prompt_id": expected,
+            })),
+        ),
+        SubmitError::IllegalActionIndex {
+            submitted,
+            legal_count,
+        } => (
+            ApiErrorCode::IllegalActionIndex,
+            format!("action_index {submitted} out of range (legal_count={legal_count})"),
+            Some(serde_json::json!({
+                "submitted": submitted,
+                "legal_count": legal_count,
+            })),
+        ),
+        SubmitError::Transport(msg) => (
+            ApiErrorCode::Internal,
+            format!("transport error: {msg}"),
+            None,
+        ),
+    };
+    let api_err = match details {
+        Some(d) => ApiError::with_details(code, msg, d),
+        None => ApiError::new(code, msg),
+    };
+    api_error(api_err)
 }
 
 fn frame_to_event(frame: &SseFrame, tick: Option<u64>) -> Event {

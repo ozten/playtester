@@ -50,6 +50,7 @@ fn every_wire_contract_route_is_present() {
         "/api/runs/{run_id}/games/{game_id}",
         "/api/runs/{run_id}/games/{game_id}/events",
         "/api/runs/{run_id}/games/{game_id}/stream",
+        "/api/runs/{run_id}/games/{game_id}/actions",
         "/api/reports",
         "/api/reports/{report_id}",
         "/api/reports/{report_id}/markdown",
@@ -89,6 +90,8 @@ fn every_public_api_type_is_in_components_schemas() {
         "SseFrame",
         "GameRegistryEntry",
         "AgentRegistryEntry",
+        "SubmitActionBody",
+        "SubmitActionResponse",
     ];
     for ty in required_types {
         assert!(

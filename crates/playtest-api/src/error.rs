@@ -44,6 +44,27 @@ pub enum ApiErrorCode {
     /// (e.g. `/api/reports` in Unit 17, proper implementation deferred
     /// to a later unit).
     NotImplemented,
+
+    /// `POST .../actions` was submitted with a `prompt_id` that does
+    /// not match the currently-pending prompt. The game advanced
+    /// before the submission landed. Fetch the latest `turn_prompt`
+    /// via the SSE stream and retry with the new `prompt_id`. Phase
+    /// 2.5.
+    StaleTick,
+
+    /// `POST .../actions` supplied an `action_index` outside the range
+    /// of the pending prompt's `legal_actions`. Phase 2.5.
+    IllegalActionIndex,
+
+    /// `POST .../actions` arrived with no prompt pending for this
+    /// seat — either the game has not reached the seat yet or the
+    /// last prompt was already satisfied. Phase 2.5.
+    NotYourTurn,
+
+    /// `POST .../actions` targeted a seat that is not backed by an
+    /// `http-remote` agent. AI-only seats cannot be driven via HTTP.
+    /// Phase 2.5.
+    NoRemoteAgentAtSeat,
 }
 
 /// Uniform error body, shared by every endpoint.
@@ -99,7 +120,11 @@ pub fn http_status(code: ApiErrorCode) -> u16 {
         ApiErrorCode::UnknownGame
         | ApiErrorCode::UnknownAgent
         | ApiErrorCode::InvalidConfig
-        | ApiErrorCode::InvalidPaginationParams => 400,
+        | ApiErrorCode::InvalidPaginationParams
+        | ApiErrorCode::StaleTick
+        | ApiErrorCode::IllegalActionIndex
+        | ApiErrorCode::NotYourTurn
+        | ApiErrorCode::NoRemoteAgentAtSeat => 400,
         ApiErrorCode::RunNotFound | ApiErrorCode::GameNotFound => 404,
         ApiErrorCode::Internal => 500,
         ApiErrorCode::NotImplemented => 501,

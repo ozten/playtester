@@ -34,7 +34,7 @@
 use playtest_api::{
     API_VERSION, AgentRegistryEntry, ApiError, ApiErrorCode, ApiResponse, CreateRunRequest,
     EventPage, GameMetadata, GameRegistryEntry, GameSummary, LogLineDto, RunStatus, RunSummary,
-    SseFrame,
+    SseFrame, SubmitActionBody, SubmitActionResponse,
 };
 use schemars::JsonSchema;
 use schemars::r#gen::{SchemaGenerator, SchemaSettings};
@@ -63,6 +63,8 @@ pub fn openapi_json() -> Value {
     register::<SseFrame>(&mut generator);
     register::<GameRegistryEntry>(&mut generator);
     register::<AgentRegistryEntry>(&mut generator);
+    register::<SubmitActionBody>(&mut generator);
+    register::<SubmitActionResponse>(&mut generator);
 
     // Convert the generator's definitions into a JSON object suitable
     // for `components.schemas`.
@@ -348,6 +350,8 @@ fn add_games(paths: &mut Map<String, Value>) {
         }),
     );
 
+    add_actions_endpoint(paths);
+
     paths.insert(
         "/api/runs/{run_id}/games/{game_id}/stream".to_owned(),
         json!({
@@ -374,6 +378,52 @@ fn add_games(paths: &mut Map<String, Value>) {
                     ),
                     "404": error_response("`run_id` or `game_id` unknown."),
                 }
+            }
+        }),
+    );
+}
+
+fn add_actions_endpoint(paths: &mut Map<String, Value>) {
+    paths.insert(
+        "/api/runs/{run_id}/games/{game_id}/actions".to_owned(),
+        json!({
+            "post": {
+                "summary": "Submit an action_index for a pending turn_prompt (Phase 2.5).",
+                "description":
+                    "Inbound path for browser-driven play. The body \
+                     carries `{seat, prompt_id, action_index}`. The \
+                     server validates against the pending prompt on \
+                     the per-game `TurnCoordinator`: seat must have a \
+                     registered `http-remote` agent, a prompt must be \
+                     pending for that seat, the submitted `prompt_id` \
+                     must match, and `action_index` must be in range. \
+                     Success returns 200 with `{accepted: true}`. The \
+                     next `event` frame on the SSE stream is the real \
+                     signal that the action was applied.",
+                "parameters": [
+                    path_param("run_id", "UUID of the run."),
+                    path_param("game_id", "Server-assigned game id."),
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": schema_ref("SubmitActionBody"),
+                        }
+                    }
+                },
+                "responses": {
+                    "200": json_response(
+                        "Action accepted; game advances asynchronously.",
+                        envelope_ref("SubmitActionResponse"),
+                        None,
+                    ),
+                    "400": error_response(
+                        "Submission rejected: `StaleTick`, `IllegalActionIndex`, \
+                         `NotYourTurn`, or `NoRemoteAgentAtSeat`.",
+                    ),
+                    "404": error_response("`run_id` or `game_id` unknown."),
+                },
             }
         }),
     );
