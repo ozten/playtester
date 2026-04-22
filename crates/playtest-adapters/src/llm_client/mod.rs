@@ -11,7 +11,9 @@ pub mod record;
 pub mod stub;
 
 pub use playback::PlaybackLlmClient;
-pub use production::ProductionLlmClient;
+pub use production::{
+    ProductionLlmClient, ProductionLlmConfig, ProviderKind, SecretString,
+};
 pub use record::RecordLlmClient;
 pub use stub::StubLlmClient;
 

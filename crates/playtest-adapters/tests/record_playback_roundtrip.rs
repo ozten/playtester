@@ -151,7 +151,7 @@ async fn llm_client_record_then_playback_replays_responses() {
             .with_cache_tokens(5, 1);
         let mut record_llm = RecordLlmClient::create(inner, &tape).unwrap();
         let resp = record_llm.complete(req.clone()).await.unwrap();
-        let prod_inner = ProductionLlmClient::new();
+        let prod_inner = ProductionLlmClient::not_configured();
         let mut record_prod =
             RecordLlmClient::create(prod_inner, dir.path().join("llm2.jsonl")).unwrap();
         let prod_err = record_prod.complete(req.clone()).await.unwrap_err();

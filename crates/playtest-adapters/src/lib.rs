@@ -22,6 +22,9 @@ pub use game_event_sink::{
     BroadcastGameEventSink, PlaybackGameEventSink, ProductionGameEventSink, RecordGameEventSink,
     StubGameEventSink,
 };
-pub use llm_client::{PlaybackLlmClient, ProductionLlmClient, RecordLlmClient, StubLlmClient};
+pub use llm_client::{
+    PlaybackLlmClient, ProductionLlmClient, ProductionLlmConfig, ProviderKind, RecordLlmClient,
+    SecretString, StubLlmClient,
+};
 pub use recording::{SCHEMA_VERSION, TapeError, TapeReader, TapeWriter};
 pub use rng::{PlaybackRng, ProductionRng, RecordRng, StubRng};
