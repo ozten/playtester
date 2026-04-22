@@ -14,6 +14,7 @@ pub mod greedy;
 pub mod heuristic;
 pub mod ismcts;
 pub mod random;
+pub mod remote;
 pub mod scripted;
 
 pub use eval::EvalFn;
@@ -21,4 +22,5 @@ pub use greedy::GreedyAgent;
 pub use heuristic::{DEFAULT_TEMPERATURE, HeuristicAgent};
 pub use ismcts::{ISMCTSAgent, ISMCTSConfig, parse_config_overrides};
 pub use random::RandomAgent;
+pub use remote::{HttpRemoteAgent, RemoteAgentTransport, RemoteTransportError};
 pub use scripted::ScriptedAgent;

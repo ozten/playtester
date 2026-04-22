@@ -14,10 +14,11 @@ playtest-core.workspace = true
 playtest-ports.workspace = true
 async-trait.workspace = true
 rand_chacha.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 playtest-adapters.workspace = true
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 tempfile = "3"
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "sync"] }
