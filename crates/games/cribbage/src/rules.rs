@@ -23,7 +23,13 @@ pub struct CribbageConfig;
 
 /// What an agent sees on their turn. Hides the opponent's hand and
 /// the crib contents; exposes everything else needed to play.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Serialize + Deserialize` are load-bearing for the Phase 3 stdio
+/// agent protocol and the `LlmAgent` — both ship this view over the
+/// wire. Every nested type (`Hand`, `Card`, `Board`, `Phase`) already
+/// derives both. ShipWreck's `ShipWreckPublicView` follows the same
+/// pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicView {
     pub player: PlayerId,
     pub own_hand: Hand,
