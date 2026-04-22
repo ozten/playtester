@@ -107,6 +107,34 @@
               "NotImplemented"
             ],
             "type": "string"
+          },
+          {
+            "description": "`POST .../actions` was submitted with a `prompt_id` that does not match the currently-pending prompt. The game advanced before the submission landed. Fetch the latest `turn_prompt` via the SSE stream and retry with the new `prompt_id`. Phase 2.5.",
+            "enum": [
+              "StaleTick"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`POST .../actions` supplied an `action_index` outside the range of the pending prompt's `legal_actions`. Phase 2.5.",
+            "enum": [
+              "IllegalActionIndex"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`POST .../actions` arrived with no prompt pending for this seat — either the game has not reached the seat yet or the last prompt was already satisfied. Phase 2.5.",
+            "enum": [
+              "NotYourTurn"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`POST .../actions` targeted a seat that is not backed by an `http-remote` agent. AI-only seats cannot be driven via HTTP. Phase 2.5.",
+            "enum": [
+              "NoRemoteAgentAtSeat"
+            ],
+            "type": "string"
           }
         ]
       },
@@ -551,6 +579,25 @@
             "type": "object"
           },
           {
+            "description": "A remote agent is waiting for a submission. Ephemeral — not in the JSONL log, not resumable via `Last-Event-ID`. On reconnect the server re-emits this frame from the coordinator's pending state when the game is still waiting.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/TurnPromptPayload"
+              },
+              "kind": {
+                "enum": [
+                  "turn_prompt"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
             "description": "Keep-alive tick so proxies do not time out idle streams. Carries no payload.",
             "properties": {
               "kind": {
@@ -566,13 +613,83 @@
             "type": "object"
           }
         ]
+      },
+      "SubmitActionBody": {
+        "description": "Body of `POST /api/runs/{run_id}/games/{game_id}/actions` — the inbound path Phase 2.5 introduces for browser-driven play.",
+        "properties": {
+          "action_index": {
+            "description": "Zero-based index into the prompt's `legal_actions` list.",
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "prompt_id": {
+            "description": "The `prompt_id` from the `turn_prompt` frame being answered. Prevents stale submissions after the game has advanced.",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "seat": {
+            "description": "Zero-based seat index the action is for. Must match the seat of the currently-pending prompt.",
+            "format": "uint8",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action_index",
+          "prompt_id",
+          "seat"
+        ],
+        "type": "object"
+      },
+      "SubmitActionResponse": {
+        "description": "Response body of a successful action submission. Minimal by design — the next `event` frame on the SSE stream is the meaningful signal that the submission was applied.",
+        "properties": {
+          "accepted": {
+            "description": "Always `true` on a 200 response; kept so the shape is a JSON object rather than a bare `null`.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "type": "object"
+      },
+      "TurnPromptPayload": {
+        "description": "Payload carried by [`SseFrame::TurnPrompt`]. A remote agent at `seat` is waiting for a submission; the client should POST an action_index into the legal list. Echo `prompt_id` back so the server can reject stale submissions.",
+        "properties": {
+          "legal_actions": {
+            "description": "Legal actions indexed 0..N, each serialized as the game's `Action` type. The client picks one index and submits it.",
+            "items": true,
+            "type": "array"
+          },
+          "prompt_id": {
+            "description": "Per-game monotonic id; echo on submission so the server can reject stale prompts (e.g., the game advanced before the client submitted).",
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "seat": {
+            "description": "Zero-based seat index the prompt is addressed to.",
+            "format": "uint8",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "legal_actions",
+          "prompt_id",
+          "seat"
+        ],
+        "type": "object"
       }
     }
   },
   "info": {
     "description": "Localhost HTTP + Server-Sent Events surface for the playtester engine. See docs/api-contract.md for versioning policy, SSE semantics, and error catalog.",
     "title": "Playtester API",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -662,9 +779,9 @@
             "content": {
               "application/json": {
                 "example": {
-                  "api_version": "1.0.0",
+                  "api_version": "1.1.0",
                   "data": {
-                    "api_version": "1.0.0",
+                    "api_version": "1.1.0",
                     "status": "ok"
                   },
                   "errors": []
@@ -1198,6 +1315,128 @@
           }
         },
         "summary": "Fetch one game's full metadata."
+      }
+    },
+    "/api/runs/{run_id}/games/{game_id}/actions": {
+      "post": {
+        "description": "Inbound path for browser-driven play. The body carries `{seat, prompt_id, action_index}`. The server validates against the pending prompt on the per-game `TurnCoordinator`: seat must have a registered `http-remote` agent, a prompt must be pending for that seat, the submitted `prompt_id` must match, and `action_index` must be in range. Success returns 200 with `{accepted: true}`. The next `event` frame on the SSE stream is the real signal that the action was applied.",
+        "parameters": [
+          {
+            "description": "UUID of the run.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Server-assigned game id.",
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitActionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/SubmitActionResponse"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Action accepted; game advances asynchronously."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Submission rejected: `StaleTick`, `IllegalActionIndex`, `NotYourTurn`, or `NoRemoteAgentAtSeat`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "null"
+                    },
+                    "errors": {
+                      "items": {
+                        "$ref": "#/components/schemas/ApiError"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "api_version",
+                    "errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`run_id` or `game_id` unknown."
+          }
+        },
+        "summary": "Submit an action_index for a pending turn_prompt (Phase 2.5)."
       }
     },
     "/api/runs/{run_id}/games/{game_id}/events": {

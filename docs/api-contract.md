@@ -23,7 +23,7 @@ is wrapped in a uniform envelope:
 
 ```json
 {
-  "api_version": "1.0.0",
+  "api_version": "1.1.0",
   "data": { "...endpoint-specific payload..." },
   "errors": []
 }
@@ -42,7 +42,7 @@ Streaming endpoints (paths ending in `/stream`) use
 ## Versioning
 
 `API_VERSION` is semver-major.minor.patch. The current value is
-`1.0.0`.
+`1.1.0`.
 
 - **Major bump** — any breaking change to request or response JSON
   shapes: fields removed, types changed, meanings changed. Clients
@@ -55,6 +55,12 @@ Streaming endpoints (paths ending in `/stream`) use
 - **Patch bump** — wording changes to error messages, perf tweaks,
   and other non-contract adjustments.
 
+`1.1.0` (Phase 2.5) — additive introduction of the `http-remote` agent
+kind, the `turn_prompt` SSE frame, `POST /api/runs/{run_id}/games/
+{game_id}/actions`, and the four rejection error codes (`StaleTick`,
+`IllegalActionIndex`, `NotYourTurn`, `NoRemoteAgentAtSeat`). Clients
+built against `1.0.0` and tolerant of unknown fields continue to work.
+
 There is no compatibility layer. The server speaks exactly one major
 version at a time, and that version is `api_version`.
 
@@ -66,22 +72,23 @@ warning but is allowed; do not do this on a multi-tenant host.
 
 ## Endpoints
 
-| Method | Path                                            | Purpose                         |
-| ------ | ----------------------------------------------- | ------------------------------- |
-| GET    | `/api/health`                                   | Liveness + version probe        |
-| GET    | `/api/games-registry`                           | List registered games           |
-| GET    | `/api/agents-registry`                          | List registered agent kinds    |
-| POST   | `/api/runs`                                     | Create a run                    |
-| GET    | `/api/runs`                                     | List runs                       |
-| GET    | `/api/runs/{run_id}`                            | Fetch one run                   |
-| GET    | `/api/runs/{run_id}/stream`                     | SSE: run-level events           |
-| GET    | `/api/runs/{run_id}/games`                      | List games in a run             |
-| GET    | `/api/runs/{run_id}/games/{game_id}`            | Fetch one game's metadata       |
-| GET    | `/api/runs/{run_id}/games/{game_id}/events`     | Paginate a game's log records   |
-| GET    | `/api/runs/{run_id}/games/{game_id}/stream`     | SSE: live per-game event stream |
-| POST   | `/api/reports`                                  | Create a report (stub, 501)     |
-| GET    | `/api/reports/{report_id}`                      | Fetch report metadata (stub)    |
-| GET    | `/api/reports/{report_id}/markdown`             | Fetch report markdown (stub)    |
+| Method | Path                                            | Purpose                                  |
+| ------ | ----------------------------------------------- | ---------------------------------------- |
+| GET    | `/api/health`                                   | Liveness + version probe                 |
+| GET    | `/api/games-registry`                           | List registered games                    |
+| GET    | `/api/agents-registry`                          | List registered agent kinds              |
+| POST   | `/api/runs`                                     | Create a run                             |
+| GET    | `/api/runs`                                     | List runs                                |
+| GET    | `/api/runs/{run_id}`                            | Fetch one run                            |
+| GET    | `/api/runs/{run_id}/stream`                     | SSE: run-level events                    |
+| GET    | `/api/runs/{run_id}/games`                      | List games in a run                      |
+| GET    | `/api/runs/{run_id}/games/{game_id}`            | Fetch one game's metadata                |
+| GET    | `/api/runs/{run_id}/games/{game_id}/events`     | Paginate a game's log records            |
+| GET    | `/api/runs/{run_id}/games/{game_id}/stream`     | SSE: live per-game event stream          |
+| POST   | `/api/runs/{run_id}/games/{game_id}/actions`    | Submit an action for a pending prompt (1.1.0) |
+| POST   | `/api/reports`                                  | Create a report (stub, 501)              |
+| GET    | `/api/reports/{report_id}`                      | Fetch report metadata (stub)             |
+| GET    | `/api/reports/{report_id}/markdown`             | Fetch report markdown (stub)             |
 
 ### `GET /api/health`
 
@@ -92,10 +99,10 @@ Example response (HTTP 200):
 
 ```json
 {
-  "api_version": "1.0.0",
+  "api_version": "1.1.0",
   "data": {
     "status": "ok",
-    "api_version": "1.0.0"
+    "api_version": "1.1.0"
   },
   "errors": []
 }
@@ -110,7 +117,7 @@ Example response:
 
 ```json
 {
-  "api_version": "1.0.0",
+  "api_version": "1.1.0",
   "data": [
     {
       "id": "cribbage",
@@ -135,9 +142,10 @@ Example response:
 
 ```json
 {
-  "api_version": "1.0.0",
+  "api_version": "1.1.0",
   "data": [
     { "id": "random",              "display_name": "random",              "supported_games": [] },
+    { "id": "http-remote",         "display_name": "http-remote",         "supported_games": [] },
     { "id": "greedy-cribbage",     "display_name": "greedy-cribbage",     "supported_games": [] },
     { "id": "heuristic-cribbage",  "display_name": "heuristic-cribbage",  "supported_games": [] },
     { "id": "ismcts-cribbage",     "display_name": "ismcts-cribbage",     "supported_games": [] }
@@ -151,6 +159,7 @@ Example response:
 | `id`                 | What it does                                                                 |
 | -------------------- | ---------------------------------------------------------------------------- |
 | `random`             | Uniform-random legal move. Game-agnostic; baseline for soak tests.          |
+| `http-remote`        | **Phase 2.5.** Defers every `choose` to an HTTP client. The server waits for `POST .../actions` with `action_index` before advancing. Game-agnostic. See *Interactive play* below. |
 | `greedy-cribbage`    | One-ply lookahead against the Cribbage eval function.                        |
 | `heuristic-cribbage` | Softmax over per-action eval scores (temperature-weighted).                  |
 | `ismcts-cribbage`    | Information-Set Monte-Carlo Tree Search. Accepts a parameter suffix — see below. |
@@ -204,7 +213,7 @@ Example response (HTTP 200):
 
 ```json
 {
-  "api_version": "1.0.0",
+  "api_version": "1.1.0",
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "game": "cribbage",
@@ -244,7 +253,7 @@ Example response:
 
 ```json
 {
-  "api_version": "1.0.0",
+  "api_version": "1.1.0",
   "data": [
     {
       "id": "game-0000",
@@ -286,7 +295,7 @@ Example response:
 
 ```json
 {
-  "api_version": "1.0.0",
+  "api_version": "1.1.0",
   "data": {
     "offset": 0,
     "limit": 5,
@@ -336,16 +345,24 @@ patterns; the playtester server only uses GET).
 Each SSE frame's `data:` payload is a JSON object. The frame's
 `event:` type tag identifies the variant:
 
-| `event:` | `data:` shape                    | Meaning                           |
-| -------- | -------------------------------- | --------------------------------- |
-| `header` | The log's full header JSON       | First frame; sent on connect.     |
-| `event`  | One log `event` JSON record      | Game tick. Carries a numeric SSE `id:` equal to the tick id. |
-| `final`  | The log's full final-record JSON | Last frame. The stream ends here. |
-| `heartbeat` | `null`                        | Keep-alive; emitted every ~15s.   |
+| `event:`       | `data:` shape                        | Meaning                           |
+| -------------- | ------------------------------------ | --------------------------------- |
+| `header`       | The log's full header JSON           | First frame; sent on connect.     |
+| `event`        | One log `event` JSON record          | Game tick. Carries a numeric SSE `id:` equal to the tick id. |
+| `final`        | The log's full final-record JSON     | Last frame. The stream ends here. |
+| `turn_prompt`  | `{seat, prompt_id, legal_actions[]}` | **Phase 2.5.** An `http-remote` agent is waiting for a `POST .../actions` submission. Ephemeral: not resumable via `Last-Event-ID`; server re-emits on reconnect from its pending state. |
+| `heartbeat`    | `null`                               | Keep-alive; emitted every ~15s.   |
 
 The machine-readable variant tag in `SseFrame` (per
 `components.schemas.SseFrame` in the OpenAPI dump) uses
-`snake_case`: `header`, `event`, `final`, `heartbeat`.
+`snake_case`: `header`, `event`, `final`, `turn_prompt`, `heartbeat`.
+
+**`turn_prompt` is ephemeral.** It is generated by the server's
+per-game `TurnCoordinator` when an `http-remote` agent's turn arrives;
+it is **not** written to the JSONL log. `GET .../events` pagination
+will never return a `turn_prompt` record. Clients that want "what
+happened" history read the log; clients that want "what do I need to
+do now" state subscribe to the live stream.
 
 ### Per-run frames
 
@@ -386,6 +403,124 @@ The run-level `/api/runs/{run_id}/stream` does not currently
 replay past `game_started`/`game_finished` frames if a client
 reconnects mid-run; plan for a full page reload + re-subscribe if
 the run-level socket drops.
+
+**`turn_prompt` on reconnect.** If the game is mid-decision when a
+client reconnects, the server reads the coordinator's pending-prompt
+state after JSONL catch-up and re-emits the current `turn_prompt`
+frame once. Submitting clears the pending state; reconnecting after
+a submission but before the next event fires yields no `turn_prompt`
+re-emit.
+
+## Interactive play (Phase 2.5)
+
+Interactive play is the inbound path that lets a browser client drive
+one or more seats in a live game. It layers on top of the existing
+SSE stream with two additions:
+
+1. An `http-remote` agent kind, listed in `/api/agents-registry` and
+   accepted in `POST /api/runs`'s `agents` array.
+2. A `turn_prompt` SSE frame (described above) + a
+   `POST /api/runs/{run_id}/games/{game_id}/actions` endpoint.
+
+The pattern is request → choose → submit:
+
+- The engine calls the `http-remote` agent's `choose` at seat `s`.
+- The server emits a `turn_prompt` frame with `{seat, prompt_id, legal_actions}`.
+- The client renders the legal actions and posts the chosen index.
+- The server validates and delivers; the next `event` frame on the
+  stream is the game's response.
+
+### `POST /api/runs/{run_id}/games/{game_id}/actions`
+
+Request body:
+
+```json
+{
+  "seat": 0,
+  "prompt_id": 7,
+  "action_index": 2
+}
+```
+
+- `seat` must be a seat backed by `http-remote` in this run's agents
+  array.
+- `prompt_id` must match the currently-pending prompt for that seat.
+- `action_index` must be `< legal_actions.len()` from that prompt.
+
+Example success response (HTTP 200):
+
+```json
+{
+  "api_version": "1.1.0",
+  "data": { "accepted": true },
+  "errors": []
+}
+```
+
+Failure modes (HTTP 400):
+
+| `code`                | Meaning                                                                      |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `NoRemoteAgentAtSeat` | That seat is AI-only (not `http-remote`).                                    |
+| `NotYourTurn`         | No prompt is pending for this seat, or the pending prompt is for another seat. |
+| `StaleTick`           | The submitted `prompt_id` does not match the pending one; the game advanced. Fetch the latest `turn_prompt` and retry with the new id. |
+| `IllegalActionIndex`  | `action_index >= legal_actions.len()`.                                       |
+
+HTTP 404 maps to `RunNotFound` / `GameNotFound` as for the read
+endpoints. Malformed JSON produces 400 via axum's default body-
+parsing rejection.
+
+### Worked Cribbage example
+
+Create a run with seat 0 human-driven, seat 1 AI:
+
+```sh
+curl -s -X POST localhost:7878/api/runs \
+  -H 'content-type: application/json' \
+  -d '{"game":"cribbage","agents":["http-remote","ismcts-cribbage"],"games_count":1,"seed":7}'
+```
+
+Subscribe to the per-game stream (new game is `game-0000`):
+
+```
+GET /api/runs/{run_id}/games/game-0000/stream
+```
+
+A couple of `event` frames arrive (the engine deals cards to both
+players), then a `turn_prompt` for the discard decision:
+
+```
+event: turn_prompt
+data: {"seat":0,"prompt_id":0,"legal_actions":[
+  {"Discard":[{"rank":"Ace","suit":"Clubs"},{"rank":"Two","suit":"Hearts"}]},
+  {"Discard":[{"rank":"Ace","suit":"Clubs"},{"rank":"Three","suit":"Diamonds"}]},
+  ...
+]}
+```
+
+Submit the first option:
+
+```sh
+curl -s -X POST localhost:7878/api/runs/{run_id}/games/game-0000/actions \
+  -H 'content-type: application/json' \
+  -d '{"seat":0,"prompt_id":0,"action_index":0}'
+```
+
+The next frame on the stream is an `event` carrying
+`payload.kind == "discard_to_crib"` — the game advanced. The cycle
+repeats for each pegging play and for the show-phase confirmation;
+see *Cribbage event payloads* below for the full taxonomy.
+
+### What is NOT in this phase
+
+- **No stdio / subprocess protocol.** That is Phase 3.
+- **No scratch buffer, no rationale field.** Phase 3 adds the LLM-
+  shaped surface; `http-remote` stays minimal.
+- **No submission timeout / abandoned-game GC.** If the client never
+  posts, the game hangs until the run is shut down. A timeout policy
+  is Phase 3+ once real usage shapes what sensible defaults look like.
+- **No submission authentication.** Consistent with the rest of the
+  localhost-only trust model in this phase.
 
 ## Game event payloads
 
@@ -539,6 +674,10 @@ and end-user display. `details` is optional and error-specific.
 | `UnknownAgent`            | 400  | Request references an agent id that isn't registered. |
 | `InvalidConfig`           | 400  | Wrong `agents.len()`, bad `games_count`, etc.  |
 | `InvalidPaginationParams` | 400  | `limit` out of `1..=10000` range.              |
+| `StaleTick`               | 400  | `POST .../actions` sent with a `prompt_id` that no longer matches the pending prompt. (1.1.0) |
+| `IllegalActionIndex`      | 400  | `POST .../actions` sent an `action_index` >= `legal_actions.len()`. (1.1.0) |
+| `NotYourTurn`             | 400  | `POST .../actions` sent with no pending prompt for that seat. (1.1.0) |
+| `NoRemoteAgentAtSeat`     | 400  | `POST .../actions` sent for a seat that isn't backed by `http-remote`. (1.1.0) |
 | `RunNotFound`             | 404  | `run_id` is unknown or malformed.              |
 | `GameNotFound`            | 404  | `game_id` has no log file on disk.             |
 | `Internal`                | 500  | Unexpected server-side failure.                |
