@@ -1,7 +1,7 @@
 ---
 title: "feat: HTTP remote agent (Phase 2.5) — browser-submits-action path"
 type: feat
-status: active
+status: shipped
 date: 2026-04-22
 ---
 
@@ -163,7 +163,7 @@ sequenceDiagram
 
 ## Implementation Units
 
-- [ ] **Unit 1: `RemoteAgentTransport` port trait + `HttpRemoteAgent<G>` + unit tests**
+- [x] **Unit 1: `RemoteAgentTransport` port trait + `HttpRemoteAgent<G>` + unit tests**
 
 **Goal:** Establish the transport abstraction and the game-agnostic agent that uses it. No server wiring yet — the agent is testable against a stub transport.
 
@@ -203,7 +203,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 2: `AgentBuildCtx` threading + `http-remote` registration + CLI rejection**
+- [x] **Unit 2: `AgentBuildCtx` threading + `http-remote` registration + CLI rejection**
 
 **Goal:** Thread the optional transport through the shared agent-build and dispatch machinery so both CLI and server use one path. `http-remote` shows up in `KNOWN_AGENTS` and `/api/agents-registry` but cleanly fails fast when no transport is supplied.
 
@@ -241,7 +241,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 3: Server-side `TurnCoordinator` + `AppState` extension**
+- [x] **Unit 3: Server-side `TurnCoordinator` + `AppState` extension**
 
 **Goal:** Implement the production `RemoteAgentTransport` on the server side, owning the per-game pending-prompt state and the agent channels. Register coordinators in `AppState` alongside the existing per-game broadcasters.
 
@@ -283,7 +283,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 4: `SseFrame::TurnPrompt` variant + per-game SSE merge + pending-prompt replay**
+- [x] **Unit 4: `SseFrame::TurnPrompt` variant + per-game SSE merge + pending-prompt replay**
 
 **Goal:** Wire the new SSE frame variant end-to-end: API type, server-side broadcast merge, and reconnect-time pending-prompt replay.
 
@@ -322,7 +322,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 5: `POST /api/runs/{run_id}/games/{game_id}/actions` + new error codes**
+- [x] **Unit 5: `POST /api/runs/{run_id}/games/{game_id}/actions` + new error codes**
 
 **Goal:** Add the inbound endpoint and wire it to the coordinator, with the full rejection taxonomy in `ApiErrorCode`.
 
@@ -365,7 +365,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 6: End-to-end integration test — full Cribbage game via HTTP submissions**
+- [x] **Unit 6: End-to-end integration test — full Cribbage game via HTTP submissions**
 
 **Goal:** Prove the inbound path works at the integration boundary by playing a complete Cribbage game end-to-end through the real server, the real coordinator, and real HTTP. Deterministic under a fixed seed + fixed action-index sequence.
 
@@ -401,7 +401,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 7: Contract docs refresh — `api-contract.md` + `openapi.json` + worked example**
+- [x] **Unit 7: Contract docs refresh — `api-contract.md` + `openapi.json` + worked example**
 
 **Goal:** Everything added in Units 1–5 is discoverable by someone reading the contract without reading Rust source. The cribbage team can consume this plan's output with no further context.
 
@@ -435,7 +435,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 8: Cribbage-team handoff message draft**
+- [x] **Unit 8: Cribbage-team handoff message draft**
 
 **Goal:** A short, copy-pasteable message the maintainer can send to the cribbage UI team confirming what's now supported, giving a minimal worked example, and calling out what's still Phase 3.
 
