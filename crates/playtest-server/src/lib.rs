@@ -37,6 +37,7 @@ pub mod runner;
 pub mod schema;
 pub mod sse;
 pub mod state;
+pub mod turn_coordinator;
 
 pub use schema::openapi_json;
 

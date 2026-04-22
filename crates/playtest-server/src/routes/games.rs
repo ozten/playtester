@@ -434,6 +434,10 @@ fn frame_to_event(frame: &SseFrame, tick: Option<u64>) -> Event {
         SseFrame::Header(v) => ("header", v.clone()),
         SseFrame::Event(v) => ("event", v.clone()),
         SseFrame::Final(v) => ("final", v.clone()),
+        SseFrame::TurnPrompt(p) => (
+            "turn_prompt",
+            serde_json::to_value(p).unwrap_or(serde_json::Value::Null),
+        ),
         SseFrame::Heartbeat => ("heartbeat", serde_json::Value::Null),
     };
     let mut ev = Event::default()

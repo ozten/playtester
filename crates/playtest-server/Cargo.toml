@@ -12,16 +12,19 @@ workspace = true
 [dependencies]
 playtest-api.workspace = true
 playtest-adapters.workspace = true
+playtest-agents.workspace = true
 playtest-log.workspace = true
 playtest-registry.workspace = true
 anyhow.workspace = true
 async-stream = "0.3"
+async-trait.workspace = true
 axum.workspace = true
 dashmap.workspace = true
 futures.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "signal", "fs"] }
 tower.workspace = true
 tower-http = { workspace = true, features = ["trace"] }

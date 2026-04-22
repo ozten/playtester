@@ -36,9 +36,14 @@ pub use error::{ApiError, ApiErrorCode, http_status};
 pub use games::{EventPage, GameMetadata, GameSummary, LogLineDto};
 pub use registry::{AgentRegistryEntry, GameRegistryEntry};
 pub use runs::{CreateRunRequest, RunStatus, RunSummary};
-pub use sse::SseFrame;
+pub use sse::{SseFrame, TurnPromptPayload};
 pub use version::ApiResponse;
 
 /// Current wire-contract version. Bumped on any breaking change to the
 /// JSON shape produced or accepted by the server.
-pub const API_VERSION: &str = "1.0.0";
+///
+/// `1.1.0` — Phase 2.5: additive introduction of the `http-remote`
+/// agent kind, `SseFrame::TurnPrompt`, and `POST /api/runs/{run_id}/
+/// games/{game_id}/actions`. Clients built against `1.0.0` and
+/// tolerant of unknown fields continue to work.
+pub const API_VERSION: &str = "1.1.0";

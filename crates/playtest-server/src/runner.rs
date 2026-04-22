@@ -21,6 +21,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use dashmap::DashMap;
 use playtest_adapters::{BroadcastGameEventSink, ProductionFileSystem, ProductionGameEventSink};
+use playtest_agents::RemoteAgentTransport;
 use playtest_api::{GameSummary, RunStatus};
 use playtest_registry::game_registry::RegisteredGame;
 use playtest_registry::play::run_single_game_into_sink;
@@ -28,6 +29,7 @@ use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
 use crate::state::{AppState, RunFrame, RunHandle};
+use crate::turn_coordinator::TurnCoordinator;
 
 /// Parameters for spawning a run.
 pub struct RunSpec {
@@ -67,6 +69,7 @@ pub fn spawn(state: &AppState, spec: RunSpec) -> watch::Receiver<RunStatus> {
         status_rx: status_rx.clone(),
         run_broadcaster: run_broadcaster.clone(),
         game_broadcasters: DashMap::new(),
+        turn_coordinators: DashMap::new(),
         games: DashMap::new(),
         games_requested: spec.games_count,
     };
@@ -165,23 +168,61 @@ struct PerGameCtx {
     idx: u32,
 }
 
-async fn run_one_game(
-    ctx: &PerGameCtx,
-    game: Arc<RegisteredGame>,
-    agent_names: Arc<Vec<String>>,
-    run_broadcaster: &broadcast::Sender<RunFrame>,
-    active_runs: &Arc<DashMap<Uuid, RunHandle>>,
-) -> anyhow::Result<()> {
-    let started_at = now_ms();
+/// Scan agent names for `http-remote` seats and return their zero-based
+/// seat indices. The name match is on the base spec (before any `:`
+/// parameter suffix) so future parameterized remote kinds — e.g.,
+/// `http-remote:timeout=30s` — still resolve correctly.
+fn collect_remote_seats(agent_names: &[String]) -> Vec<u8> {
+    agent_names
+        .iter()
+        .enumerate()
+        .filter_map(|(i, name)| {
+            if playtest_registry::agent_registry::split_agent_spec(name).0 == "http-remote" {
+                u8::try_from(i).ok()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
-    // Create and register the per-game broadcaster *before* the
-    // engine starts emitting, so any subscriber who connects while
-    // the game is running can find it.
-    let (game_tx, _) = broadcast::channel::<String>(BROADCAST_CAPACITY);
+/// Build the per-seat transport vector matching `agent_names.len()`.
+/// Every non-remote seat gets `None`; every `http-remote` seat gets a
+/// clone of the coordinator behind the `dyn RemoteAgentTransport`
+/// trait object.
+fn build_transports_vec(
+    n_seats: usize,
+    coord: &Arc<TurnCoordinator>,
+) -> Vec<Option<Arc<dyn RemoteAgentTransport>>> {
+    (0..n_seats)
+        .map(|i| {
+            let seat = u8::try_from(i).expect("seat index fits in u8");
+            if coord.has_seat(seat) {
+                let t: Arc<dyn RemoteAgentTransport> = coord.clone();
+                Some(t)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn register_game_handles(
+    active_runs: &Arc<DashMap<Uuid, RunHandle>>,
+    ctx: &PerGameCtx,
+    started_at: u64,
+    game_tx: &broadcast::Sender<String>,
+    coord: Option<&Arc<TurnCoordinator>>,
+) {
     if let Some(entry) = active_runs.get(&ctx.run_id) {
         entry
             .game_broadcasters
             .insert(ctx.game_id.clone(), game_tx.clone());
+        if let Some(c) = coord {
+            entry
+                .turn_coordinators
+                .insert(ctx.game_id.clone(), c.clone());
+        }
         entry.games.insert(
             ctx.game_id.clone(),
             GameSummary {
@@ -194,10 +235,44 @@ async fn run_one_game(
             },
         );
     }
+}
+
+async fn run_one_game(
+    ctx: &PerGameCtx,
+    game: Arc<RegisteredGame>,
+    agent_names: Arc<Vec<String>>,
+    run_broadcaster: &broadcast::Sender<RunFrame>,
+    active_runs: &Arc<DashMap<Uuid, RunHandle>>,
+) -> anyhow::Result<()> {
+    let started_at = now_ms();
+
+    // Create and register the per-game broadcaster *before* the engine
+    // starts emitting, so any subscriber who connects while the game is
+    // running can find it.
+    let (game_tx, _) = broadcast::channel::<String>(BROADCAST_CAPACITY);
+
+    // Coordinator created only if at least one seat is `http-remote`;
+    // AI-only games pay nothing for this feature.
+    let remote_seats = collect_remote_seats(&agent_names);
+    let turn_coordinator = (!remote_seats.is_empty())
+        .then(|| Arc::new(TurnCoordinator::new(&remote_seats, game_tx.clone())));
+
+    register_game_handles(
+        active_runs,
+        ctx,
+        started_at,
+        &game_tx,
+        turn_coordinator.as_ref(),
+    );
 
     let _ = run_broadcaster.send(RunFrame::GameStarted {
         game_id: ctx.game_id.clone(),
     });
+
+    let remote_transports: Option<Vec<Option<Arc<dyn RemoteAgentTransport>>>> =
+        turn_coordinator
+            .as_ref()
+            .map(|c| build_transports_vec(agent_names.len(), c));
 
     let out_path = ctx.out_path.clone();
     let game_tx_cloned = game_tx.clone();
@@ -212,7 +287,7 @@ async fn run_one_game(
             agent_names.as_ref(),
             per_game_seed,
             None,
-            None,
+            remote_transports.as_deref(),
             &mut sink,
         )?;
         Ok(())
@@ -241,10 +316,13 @@ async fn run_one_game(
 
     // Dropping the per-game broadcaster closes any live SSE streams
     // for this game, which is the documented "game done" signal to
-    // clients.
+    // clients. The coordinator is removed in parallel — any agent
+    // still awaiting on it will see a Cancelled error and the run
+    // supervisor records the failure.
     drop(game_tx);
     if let Some(entry) = active_runs.get(&ctx.run_id) {
         entry.game_broadcasters.remove(&ctx.game_id);
+        entry.turn_coordinators.remove(&ctx.game_id);
     }
     Ok(())
 }

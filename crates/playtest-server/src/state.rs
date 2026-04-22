@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
+use crate::turn_coordinator::TurnCoordinator;
+
 /// Top-level server state. Cheap to `clone`; internally reference-counted.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -59,6 +61,11 @@ pub struct RunHandle {
     /// Per-game broadcasters, registered as each game starts. Keyed
     /// by the stable `game-NNNN` id used in log filenames.
     pub game_broadcasters: DashMap<String, broadcast::Sender<String>>,
+
+    /// Per-game `TurnCoordinator`s, registered for games that have at
+    /// least one `http-remote` seat. Absent for AI-only games. Keyed
+    /// the same way as `game_broadcasters`.
+    pub turn_coordinators: DashMap<String, Arc<TurnCoordinator>>,
 
     /// Summaries of games seen so far, keyed by stable game id.
     pub games: DashMap<String, playtest_api::GameSummary>,
