@@ -5,14 +5,27 @@
 //! [`shipwreck_eval`](playtest_shipwreck::shipwreck_eval)), agent
 //! construction split into two per-game entry points. The original
 //! generic [`build_agent`] remains for agents that don't need a
-//! per-game eval (Random) — it's now a thin shim that the per-game
-//! factories fall through to for those names.
+//! per-game eval (Random, HTTP-remote) — it's now a thin shim that the
+//! per-game factories fall through to for those names.
+//!
+//! ## Per-seat build context
+//!
+//! Phase 2.5 added one more dimension: the `http-remote` agent needs a
+//! server-provided transport port at construction time. Rather than
+//! continue growing the positional signature, all three factories take
+//! an [`AgentBuildCtx`] that carries the seat, seed, and any optional
+//! transports the caller can supply. CLI callers pass
+//! [`AgentBuildCtx::cli`] (no transport); the HTTP server builds a ctx
+//! with a `Some(transport)` for any seat it wants to back with a
+//! remote client.
+
+use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use playtest_adapters::ProductionRng;
 use playtest_agents::{
-    DEFAULT_TEMPERATURE, GreedyAgent, HeuristicAgent, ISMCTSAgent, ISMCTSConfig, RandomAgent,
-    parse_config_overrides,
+    DEFAULT_TEMPERATURE, GreedyAgent, HeuristicAgent, HttpRemoteAgent, ISMCTSAgent, ISMCTSConfig,
+    RandomAgent, RemoteAgentTransport, parse_config_overrides,
 };
 use playtest_core::{Agent, Game, PlayerId};
 use playtest_cribbage::{CribbageGame, cribbage_eval};
@@ -24,8 +37,13 @@ use playtest_shipwreck::{ShipWreckGame, shipwreck_eval};
 /// ISMCTS agents additionally accept a parameter suffix after `:`, e.g.
 /// `"ismcts-cribbage:iter=2000,c=1.4"`. The base name (before the `:`)
 /// is what [`is_known_agent`] checks against.
+///
+/// `"http-remote"` is a game-agnostic interactive kind — it requires the
+/// caller to supply a [`RemoteAgentTransport`] via [`AgentBuildCtx`].
+/// The CLI rejects it (no coordinator); the HTTP server accepts it.
 pub const KNOWN_AGENTS: &[&str] = &[
     "random",
+    "http-remote",
     "greedy-cribbage",
     "heuristic-cribbage",
     "ismcts-cribbage",
@@ -47,6 +65,41 @@ fn default_ismcts_config() -> ISMCTSConfig {
         exploration_c: std::f64::consts::SQRT_2,
         rollout_depth: 50,
         seed: 0,
+    }
+}
+
+/// Per-seat build context used by the agent factories.
+///
+/// `seed` and `player` have the same meaning as the prior positional
+/// arguments. `remote_transport` is populated by the HTTP server when
+/// a given seat is backed by a remote client; it stays `None` for CLI
+/// calls so `http-remote` fails fast with a helpful message.
+#[derive(Clone)]
+pub struct AgentBuildCtx {
+    pub seed: u64,
+    pub player: PlayerId,
+    pub remote_transport: Option<Arc<dyn RemoteAgentTransport>>,
+}
+
+impl AgentBuildCtx {
+    /// Ctx for a CLI caller — no remote transport.
+    #[must_use]
+    pub fn cli(seed: u64, player: PlayerId) -> Self {
+        Self {
+            seed,
+            player,
+            remote_transport: None,
+        }
+    }
+}
+
+impl core::fmt::Debug for AgentBuildCtx {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AgentBuildCtx")
+            .field("seed", &self.seed)
+            .field("player", &self.player)
+            .field("remote_transport", &self.remote_transport.is_some())
+            .finish()
     }
 }
 
@@ -95,8 +148,27 @@ fn ismcts_config_from_params(params: Option<&str>, seed: u64) -> Result<ISMCTSCo
     Ok(cfg)
 }
 
+fn build_http_remote<G>(ctx: &AgentBuildCtx) -> Result<Box<dyn Agent<G>>>
+where
+    G: Game + ?Sized + 'static,
+    G::State: Send + Sync + 'static,
+    G::PublicView: Send + Sync + 'static,
+    G::Action: Send + Sync + serde::Serialize + 'static,
+{
+    let transport = ctx.remote_transport.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "http-remote agent requires a server-provided transport; use POST /api/runs with \
+             agents=[\"http-remote\", ...] instead of the CLI"
+        )
+    })?;
+    Ok(Box::new(HttpRemoteAgent::<G>::new(
+        ctx.player,
+        transport.clone(),
+    )))
+}
+
 /// Generic agent builder — handles agent kinds that don't depend on a
-/// per-game eval function (today, just `"random"`).
+/// per-game eval function (today: `"random"` and `"http-remote"`).
 ///
 /// Per-game search agents (`greedy-cribbage`, `heuristic-cribbage`,
 /// `greedy-shipwreck`, `heuristic-shipwreck`) must be built via
@@ -106,19 +178,21 @@ fn ismcts_config_from_params(params: Option<&str>, seed: u64) -> Result<ISMCTSCo
 /// # Errors
 /// Returns an error listing [`KNOWN_AGENTS`] if `name` is not
 /// registered or is a per-game kind in disguise (e.g. trying to build
-/// `greedy-cribbage` via the generic path).
-pub fn build_agent<G>(name: &str, seed: u64) -> Result<Box<dyn Agent<G>>>
+/// `greedy-cribbage` via the generic path). Returns an error for
+/// `http-remote` when `ctx.remote_transport` is `None`.
+pub fn build_agent<G>(name: &str, ctx: &AgentBuildCtx) -> Result<Box<dyn Agent<G>>>
 where
     G: Game + ?Sized + 'static,
     G::State: Send + Sync + 'static,
     G::PublicView: Send + Sync + 'static,
-    G::Action: Send + Sync + 'static,
+    G::Action: Send + Sync + serde::Serialize + 'static,
 {
     match name {
         "random" => {
-            let rng = ProductionRng::from_seed(seed);
+            let rng = ProductionRng::from_seed(ctx.seed);
             Ok(Box::new(RandomAgent::<G, _>::new(rng)))
         }
+        "http-remote" => build_http_remote::<G>(ctx),
         other => bail!(
             "unknown or non-generic agent: {other}; known: {}",
             KNOWN_AGENTS.join(", ")
@@ -134,33 +208,33 @@ where
 ///
 /// # Errors
 /// Returns an error if `spec` doesn't match a known agent or is a
-/// ShipWreck-specific kind.
+/// ShipWreck-specific kind. Returns an error for `http-remote` when
+/// `ctx.remote_transport` is `None`.
 pub fn build_cribbage_agent(
     spec: &str,
-    seed: u64,
-    player: PlayerId,
+    ctx: &AgentBuildCtx,
 ) -> Result<Box<dyn Agent<CribbageGame>>> {
     let (name, params) = split_agent_spec(spec);
     match name {
-        "random" => build_agent::<CribbageGame>(name, seed),
+        "random" | "http-remote" => build_agent::<CribbageGame>(name, ctx),
         "greedy-cribbage" => Ok(Box::new(GreedyAgent::<CribbageGame>::new(
-            player,
+            ctx.player,
             cribbage_eval,
         ))),
         "heuristic-cribbage" => {
-            let rng = ProductionRng::from_seed(seed);
+            let rng = ProductionRng::from_seed(ctx.seed);
             Ok(Box::new(HeuristicAgent::<CribbageGame, _>::with_temperature(
-                player,
+                ctx.player,
                 cribbage_eval,
                 rng,
                 DEFAULT_TEMPERATURE,
             )))
         }
         "ismcts-cribbage" => {
-            let cfg = ismcts_config_from_params(params, seed)?;
+            let cfg = ismcts_config_from_params(params, ctx.seed)?;
             Ok(Box::new(ISMCTSAgent::<CribbageGame>::with_eval(
                 cfg,
-                player,
+                ctx.player,
                 cribbage_eval,
             )))
         }
@@ -178,33 +252,33 @@ pub fn build_cribbage_agent(
 ///
 /// # Errors
 /// Returns an error if `spec` doesn't match a known agent or is a
-/// Cribbage-specific kind.
+/// Cribbage-specific kind. Returns an error for `http-remote` when
+/// `ctx.remote_transport` is `None`.
 pub fn build_shipwreck_agent(
     spec: &str,
-    seed: u64,
-    player: PlayerId,
+    ctx: &AgentBuildCtx,
 ) -> Result<Box<dyn Agent<ShipWreckGame>>> {
     let (name, params) = split_agent_spec(spec);
     match name {
-        "random" => build_agent::<ShipWreckGame>(name, seed),
+        "random" | "http-remote" => build_agent::<ShipWreckGame>(name, ctx),
         "greedy-shipwreck" => Ok(Box::new(GreedyAgent::<ShipWreckGame>::new(
-            player,
+            ctx.player,
             shipwreck_eval,
         ))),
         "heuristic-shipwreck" => {
-            let rng = ProductionRng::from_seed(seed);
+            let rng = ProductionRng::from_seed(ctx.seed);
             Ok(Box::new(HeuristicAgent::<ShipWreckGame, _>::with_temperature(
-                player,
+                ctx.player,
                 shipwreck_eval,
                 rng,
                 DEFAULT_TEMPERATURE,
             )))
         }
         "ismcts-shipwreck" => {
-            let cfg = ismcts_config_from_params(params, seed)?;
+            let cfg = ismcts_config_from_params(params, ctx.seed)?;
             Ok(Box::new(ISMCTSAgent::<ShipWreckGame>::with_eval(
                 cfg,
-                player,
+                ctx.player,
                 shipwreck_eval,
             )))
         }
@@ -214,3 +288,86 @@ pub fn build_shipwreck_agent(
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use playtest_agents::RemoteTransportError;
+    use serde_json::Value as JsonValue;
+
+    /// Minimal stub for tests that just need the `http-remote` code path
+    /// to succeed in constructing an agent — no round-trip logic.
+    struct NeverCalledTransport;
+
+    #[async_trait]
+    impl RemoteAgentTransport for NeverCalledTransport {
+        async fn issue_prompt(
+            &self,
+            _seat: u8,
+            _legal_json: Vec<JsonValue>,
+        ) -> Result<u64, RemoteTransportError> {
+            unreachable!("test does not exercise issue_prompt")
+        }
+        async fn await_action(
+            &self,
+            _seat: u8,
+            _prompt_id: u64,
+        ) -> Result<usize, RemoteTransportError> {
+            unreachable!("test does not exercise await_action")
+        }
+    }
+
+    #[test]
+    fn http_remote_is_in_known_agents() {
+        assert!(KNOWN_AGENTS.contains(&"http-remote"));
+        assert!(is_known_agent("http-remote"));
+    }
+
+    #[test]
+    fn build_http_remote_without_transport_fails_with_helpful_message() {
+        let ctx = AgentBuildCtx::cli(42, 0);
+        let err = build_cribbage_agent("http-remote", &ctx)
+            .err()
+            .expect("must fail without transport");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("requires a server-provided transport"),
+            "message was: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_http_remote_with_transport_succeeds_for_both_games() {
+        let ctx = AgentBuildCtx {
+            seed: 42,
+            player: 0,
+            remote_transport: Some(Arc::new(NeverCalledTransport)),
+        };
+        build_cribbage_agent("http-remote", &ctx).expect("cribbage http-remote");
+        build_shipwreck_agent("http-remote", &ctx).expect("shipwreck http-remote");
+    }
+
+    #[test]
+    fn non_remote_agents_ignore_transport() {
+        let ctx = AgentBuildCtx {
+            seed: 42,
+            player: 0,
+            remote_transport: Some(Arc::new(NeverCalledTransport)),
+        };
+        // Having a transport present shouldn't break non-remote kinds.
+        build_cribbage_agent("random", &ctx).expect("random with transport present");
+        build_cribbage_agent("greedy-cribbage", &ctx).expect("greedy with transport present");
+    }
+
+    #[test]
+    fn generic_build_agent_rejects_per_game_kinds() {
+        let ctx = AgentBuildCtx::cli(1, 0);
+        let err = build_agent::<CribbageGame>("greedy-cribbage", &ctx)
+            .err()
+            .expect("per-game kinds not in generic path");
+        let msg = err.to_string();
+        assert!(msg.contains("unknown or non-generic"), "message was: {msg}");
+    }
+}
+

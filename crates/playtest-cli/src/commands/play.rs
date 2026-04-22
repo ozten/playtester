@@ -109,5 +109,5 @@ fn run_single_game(
 ) -> Result<()> {
     let fs = ProductionFileSystem::new();
     let mut sink = ProductionGameEventSink::new(fs, out_path);
-    run_single_game_into_sink(game, agent_names, seed, fixed_time, &mut sink)
+    run_single_game_into_sink(game, agent_names, seed, fixed_time, None, &mut sink)
 }

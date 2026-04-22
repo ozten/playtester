@@ -1148,6 +1148,7 @@ name = "playtest-registry"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "playtest-adapters",
  "playtest-agents",
  "playtest-core",
@@ -1155,6 +1156,7 @@ dependencies = [
  "playtest-log",
  "playtest-ports",
  "playtest-shipwreck",
+ "serde",
  "serde_json",
  "tokio",
 ]

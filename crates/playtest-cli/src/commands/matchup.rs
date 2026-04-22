@@ -21,7 +21,7 @@ use playtest_adapters::{ProductionRng, StubGameEventSink};
 use playtest_core::{Agent, Game, GameLoop};
 use playtest_cribbage::{CribbageConfig, CribbageGame};
 use playtest_registry::agent_registry::{
-    build_cribbage_agent, build_shipwreck_agent, is_known_agent,
+    AgentBuildCtx, build_cribbage_agent, build_shipwreck_agent, is_known_agent,
 };
 use playtest_registry::game_registry::{
     RegisteredGame, lookup as lookup_game, player_count_range,
@@ -177,8 +177,8 @@ async fn play_one_game(
         RegisteredGame::Cribbage(g) => {
             let g = *g;
             let cfg = CribbageConfig;
-            let a0 = build_cribbage_agent(seat0, s0_seed, 0)?;
-            let a1 = build_cribbage_agent(seat1, s1_seed, 1)?;
+            let a0 = build_cribbage_agent(seat0, &AgentBuildCtx::cli(s0_seed, 0))?;
+            let a1 = build_cribbage_agent(seat1, &AgentBuildCtx::cli(s1_seed, 1))?;
             let mut agents: Vec<Box<dyn Agent<CribbageGame>>> = vec![a0, a1];
             let mut loop_ = GameLoop::new(&g, g.initial_state(seed, &cfg));
             let mut chance_rng = ProductionRng::from_seed(seed);
@@ -193,8 +193,8 @@ async fn play_one_game(
             let g = *g;
             let cfg = ShipWreckConfig::new(2)
                 .expect("2-player ShipWreckConfig is always valid");
-            let a0 = build_shipwreck_agent(seat0, s0_seed, 0)?;
-            let a1 = build_shipwreck_agent(seat1, s1_seed, 1)?;
+            let a0 = build_shipwreck_agent(seat0, &AgentBuildCtx::cli(s0_seed, 0))?;
+            let a1 = build_shipwreck_agent(seat1, &AgentBuildCtx::cli(s1_seed, 1))?;
             let mut agents: Vec<Box<dyn Agent<ShipWreckGame>>> = vec![a0, a1];
             let mut loop_ = GameLoop::new(&g, g.initial_state(seed, &cfg));
             let mut chance_rng = ProductionRng::from_seed(seed);

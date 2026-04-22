@@ -212,6 +212,7 @@ async fn run_one_game(
             agent_names.as_ref(),
             per_game_seed,
             None,
+            None,
             &mut sink,
         )?;
         Ok(())
