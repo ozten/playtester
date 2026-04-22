@@ -1,9 +1,10 @@
 ---
 title: "feat: stdio agent protocol + LLM agent (Phase 3)"
 type: feat
-status: active
+status: shipped
 date: 2026-04-22
 deepened: 2026-04-22
+shipped: 2026-04-22
 ---
 
 # feat: stdio agent protocol + LLM agent (Phase 3)
@@ -621,3 +622,86 @@ Dependency shape: Unit 1 + Unit 2 are independent preconditions; Units 3–5 bui
 - Registry extension point: `crates/playtest-registry/src/agent_registry.rs` (`AgentBuildCtx`, `KNOWN_AGENTS`)
 - Runtime topology: `crates/playtest-server/src/runner.rs` + `crates/playtest-registry/src/play.rs:133`
 - External: Anthropic prompt caching (`cache_control: ephemeral`), Ollama OpenAI-compatible endpoint (`/v1/chat/completions`), Slay the Spire CommunicationMod protocol shape (reference only — not adopted wholesale).
+
+## Status
+
+Phase 3 shipped 2026-04-22. All eight implementation units landed on
+`main` with one commit apiece (trunk-based per `CLAUDE.md`'s branching
+policy). Unit 8 closed the phase with five cross-cutting e2e tests and
+the `docs/BENCHMARKS.md` Phase 3 recipe.
+
+| Unit | Commit | Summary |
+|------|--------|---------|
+| 1 | `dec2376` | `LlmClient` port shape extended (system blocks + cache flag, cache-read/creation tokens) |
+| 2 | `f5ef61b` | Cribbage `PublicView` + nested types gain `Serialize` / `Deserialize` |
+| 3 | `24739e2` | `ProductionLlmClient` (Anthropic + OpenAI-compat, SSRF-guarded, API-key redacted) |
+| 4 | `221ce4d` | `LlmAgent<G>` with prompt caching, `ScratchBuffer`, sidecar writer |
+| 5 | `357cf4b` | `StdioAgent<G>` with lazy subprocess + line-framed JSON protocol |
+| 6 | `b8939b9` | Registry + CLI + server wiring; HTTP rejection of `llm` / `stdio` |
+| 7 | `c178968` | Python reference client + `docs/stdio-protocol.md` |
+| 8 | `546cca5` | Five e2e tests + Phase 3 BENCHMARKS recipe (this unit) |
+
+Post-unit docs commit follows with the `## Status` section (this one).
+
+### Test coverage at phase close
+
+`cargo test --release --workspace` runs **634 tests across all crates
+in ~210 s** (including the 2-minute `heuristic_beats_random` suite).
+Ten soak tests remain `#[ignore]` per `CLAUDE.md`'s soak policy.
+
+Five of the tests are the Unit 8 cross-cutting checks:
+
+- `crates/playtest-cli/tests/e2e_stdio_cribbage.rs` (2 tests)
+- `crates/playtest-cli/tests/e2e_llm_stubbed.rs` (3 tests)
+- `crates/playtest-cli/tests/log_has_no_coordination_frames.rs` (2 tests)
+- `crates/playtest-cli/tests/llm_replay_deterministic.rs` (1 test)
+- `crates/playtest-cli/tests/llm_tape_replay_deterministic.rs` (1 test)
+
+### Exit criteria status
+
+- **R3.1, R3.2** — `stdio` and `llm` agent kinds accepted by both game
+  factories. Covered by registry tests + the two e2e tests above.
+- **R3.3, R3.4, R3.5** — `LlmClient` port shape + production adapter
+  + budget enforcement. Covered by Unit 3's wiremock tests.
+- **R3.6** — main log is replay-from-seed deterministic; LLM not
+  consulted during replay. Covered by `llm_replay_deterministic.rs`.
+- **R3.7** — Python reference client + `docs/stdio-protocol.md`
+  shipped.
+- **R3.8** — Haiku end-to-end under $0.20. **Manual**; recipe pinned
+  in `docs/BENCHMARKS.md`, not a CI test.
+- **R3.9** — local Llama via OpenAI-compat provider. Recipe pinned in
+  `docs/BENCHMARKS.md`.
+- **R3.10** — Cribbage `PublicView` is wire-ready. Unit 2.
+- **R3.11** — `grep -rn 'cribbage\|shipwreck' crates/playtest-server/src/`
+  returns 0. Unit 6's server tests pin the invariant.
+- **R3.12** — no coordination frames in main log. Covered by
+  `log_has_no_coordination_frames.rs`.
+- **R3.13** — determinism audit still green.
+  `cargo test -p playtest-core --test determinism_audit` passes.
+  `playtest-agents/src/llm/` and `playtest-agents/src/remote/stdio/`
+  are outside the audit scope by design (agent crates are
+  adapter-land; the determinism seam is the port-level tape + event
+  log). Comment in the audit source documents the exclusion.
+
+### What's not covered and why
+
+- The Haiku and Ollama recipes (R3.8, R3.9) are manually invoked —
+  they make real network calls.
+- `ShipWreck` `LlmAgent` plays are best-effort. The exit criteria
+  were Cribbage-only by design; ShipWreck prompt-engineering is a
+  Phase 5 concern.
+- Budget-exceeded is unit-tested at the `ProductionLlmClient` layer
+  (Unit 3) and agent layer (Unit 4's `llm_agent_budget.rs`). Unit 8
+  did not add a duplicate CLI-level budget test — the layered
+  coverage already exists.
+
+### Follow-up docs to write
+
+- `docs/handoffs/2026-04-23-phase-3-handoff.md` — summary for Python
+  agent writers and LLM-scaffolding users. Deferred; not part of
+  this plan's deliverables.
+- `/ce-compound` candidates pre-declared at plan time: (a) LlmClient
+  port vs. stdio transport split rationale, (b) prompt-cache
+  discipline under `cache_control`, (c) subprocess lifecycle +
+  `kill_on_drop`. The one labeled (a) already landed at Unit 5;
+  invoke post-ship for (b) and (c).
