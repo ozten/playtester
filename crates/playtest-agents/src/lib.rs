@@ -1,5 +1,6 @@
 //! Built-in agents: [`RandomAgent`], [`ScriptedAgent`], [`GreedyAgent`],
-//! [`HeuristicAgent`].
+//! [`HeuristicAgent`], [`ISMCTSAgent`], [`LlmAgent`], [`HttpRemoteAgent`],
+//! [`StdioAgent`].
 //!
 //! The `Agent` *trait* lives in `playtest-core` (see that crate's
 //! lib docs and the architectural invariants memo for why). This crate
@@ -24,5 +25,8 @@ pub use heuristic::{DEFAULT_TEMPERATURE, HeuristicAgent};
 pub use ismcts::{ISMCTSAgent, ISMCTSConfig, parse_config_overrides};
 pub use llm::{LlmAgent, LlmAgentConfig, LlmCallRecord, LlmSidecar, ScratchBuffer, SidecarHeader};
 pub use random::RandomAgent;
-pub use remote::{HttpRemoteAgent, RemoteAgentTransport, RemoteTransportError};
+pub use remote::{
+    HttpRemoteAgent, RemoteAgentTransport, RemoteTransportError, StdioAgent, StdioAgentConfig,
+    StdioProtocolError,
+};
 pub use scripted::ScriptedAgent;

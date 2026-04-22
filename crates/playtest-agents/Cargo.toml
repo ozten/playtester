@@ -18,10 +18,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["sync", "time", "process", "io-util"] }
 
 [dev-dependencies]
 playtest-adapters.workspace = true
 playtest-cribbage.workspace = true
 tempfile = "3"
-tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time", "process", "io-util"] }
