@@ -56,6 +56,8 @@ Active plans live in `docs/plans/`:
 
 Benchmarks and exit-criteria results live in `docs/BENCHMARKS.md`. Wire contract for the SvelteKit frontend lives in `docs/api-contract.md` and `docs/openapi.json`.
 
+Documented learnings (bugs, best practices, architecture patterns) live in `docs/solutions/`, organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
+
 ## Testing policy
 
 - **Unit + integration tests run in CI** (`cargo test --release --workspace`).

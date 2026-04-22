@@ -79,7 +79,9 @@ Everything below is *explicitly* deferred so Phase 3's design space remains open
 
 ### Institutional Learnings
 
-- `docs/solutions/` still does not exist. Post-ship, two items are ce-compound candidates: the "ephemeral coordination frame vs. logged event" distinction, and the pattern for connecting a blocking game loop to the server's main runtime via transport-port traits.
+- Both post-ship ce-compound candidates are now written (2026-04-22):
+  - [`docs/solutions/architecture-patterns/ephemeral-coordination-frame-vs-logged-event-2026-04-22.md`](../solutions/architecture-patterns/ephemeral-coordination-frame-vs-logged-event-2026-04-22.md) — `turn_prompt` is engine→client coordination, not log history; routed through the SSE broadcast channel only, never through `GameEventSink`. Enforced by `crates/playtest-server/tests/http_remote_e2e.rs:203`.
+  - [`docs/solutions/architecture-patterns/blocking-loop-to-main-runtime-via-transport-trait-2026-04-22.md`](../solutions/architecture-patterns/blocking-loop-to-main-runtime-via-transport-trait-2026-04-22.md) — two sub-patterns: (a) bridge `spawn_blocking`-hosted game loops to the main axum runtime via runtime-agnostic `tokio::sync` primitives; (b) non-deterministic transport lives in `playtest-agents` with two variants, not in `playtest-ports` with four — the 4-adapter discipline is scoped to deterministic engine inputs.
 
 ### External References
 
