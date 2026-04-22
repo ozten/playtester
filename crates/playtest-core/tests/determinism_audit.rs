@@ -10,7 +10,13 @@
 //! `crates/games/`. `tests/` directories are excluded because tests
 //! are allowed to call `Instant::now` for timing assertions.
 //! Adapter crates are excluded because `SystemTime::now` is the
-//! *point* of the `ProductionClock` adapter.
+//! *point* of the `ProductionClock` adapter. The `playtest-agents`
+//! crate is also out of scope — Phase 3 `LlmAgent` and `StdioAgent`
+//! live there (`src/llm/`, `src/remote/stdio/`) and legitimately use
+//! `tokio::time::Instant::now` for latency accounting; the
+//! determinism seam for both is the port-level tape
+//! (`LlmClient` record/playback) plus the event log, not a grep on
+//! source.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

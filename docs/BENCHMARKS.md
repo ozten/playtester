@@ -273,3 +273,113 @@ cargo test --release -p playtest-shipwreck  --test ismcts_beats_heuristic -- --i
   audit but not the `#[ignore]` soaks.
 - `.github/workflows/soak.yml` runs the ignored soak tests nightly on
   a scheduled cron. A soak-job failure does not block PRs.
+
+## Phase 3 exit criteria
+
+Phase 3 introduces two external-decision-maker paths: the `stdio` agent
+kind (subprocess speaking line-delimited JSON) and the `llm` agent kind
+(Anthropic or OpenAI-compatible). The automated e2e coverage lives in
+
+```
+crates/playtest-cli/tests/e2e_stdio_cribbage.rs
+crates/playtest-cli/tests/e2e_llm_stubbed.rs
+crates/playtest-cli/tests/log_has_no_coordination_frames.rs
+crates/playtest-cli/tests/llm_replay_deterministic.rs
+crates/playtest-cli/tests/llm_tape_replay_deterministic.rs
+```
+
+The `$<$0.20` and `$0$` cost targets below are **manual** — the tests
+that would validate them would make real network calls, which don't
+belong in CI.
+
+### R3.8 — Haiku plays one Cribbage game end-to-end for under $0.20
+
+Manually invoked, never in CI. Requires a valid `ANTHROPIC_API_KEY`.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-api03-...
+cargo run --release --bin playtest -- play \
+  --game cribbage \
+  --agents llm,random \
+  --model claude-haiku-4-5-20251001 \
+  --llm-provider anthropic \
+  --llm-budget-tokens 500000 \
+  --seed 42 \
+  --games 1 \
+  --out ./target/playtest-runs/haiku-$(date +%s) \
+  --fixed-time 0
+```
+
+Expected outcome:
+
+- Game completes with a legal winner.
+- Sidecar `<out>/game-0000.llm.jsonl` has:
+  - One `sidecar_header` line recording the SHA-256 of
+    `crates/games/cribbage/rules_for_llm.md` (cache-stability audit).
+  - ~60–100 `llm_call` records — one per turn the LLM seat acted on.
+  - First call has `cache_creation_input_tokens > 0` (~3–5 KTok while
+    the rules prefix is seeded into Anthropic's cache).
+  - Calls 2+ have `cache_read_input_tokens > 0` and
+    `cache_creation_input_tokens == 0`.
+  - Cache-hit rate on turns 2+ should be **> 80%**.
+- Total tokens: ~20–40 KTok input + ~10–30 KTok output.
+- Total cost: **$0.05 – $0.20** at Haiku's list pricing.
+
+If the cost overshoots $0.20 on the first run, the levers in order
+(shortest -> largest effect):
+
+1. Shrink `crates/games/cribbage/rules_for_llm.md` — aim for ≤ 2 KTok
+   of prompt text. Cribbage's rules do not need to be
+   prose-complete; terse tables are fine.
+2. Drop `turn_log` cap from 64 to 32 in `ScratchBuffer::push_turn_log`.
+3. Strip `notes` from the per-turn user message wire payload (drop
+   the key from `build_user_message` in
+   `crates/playtest-agents/src/llm/prompt.rs`).
+
+### R3.9 — Local Llama-class model plays legally at no cost
+
+Requires a running Ollama (or any OpenAI-compatible endpoint) bound to
+localhost. Tested against `llama3:instruct`; any model with
+instruction-following competence should work.
+
+```bash
+ollama serve &                  # if not already running
+ollama pull llama3:instruct     # one-time
+
+cargo run --release --bin playtest -- play \
+  --game cribbage \
+  --agents llm,random \
+  --model llama3:instruct \
+  --llm-provider openai-compat \
+  --llm-base-url http://localhost:11434/v1/ \
+  --seed 42 \
+  --games 1 \
+  --out ./target/playtest-runs/llama-$(date +%s) \
+  --fixed-time 0
+```
+
+Expected outcome:
+
+- Game completes legally; total cost is **$0** (local inference).
+- Per-turn latency is substantially higher than Haiku — Ollama has no
+  prompt-cache semantics, so every turn re-processes the full rules
+  prefix. Sidecar `cache_read_input_tokens` and
+  `cache_creation_input_tokens` are always `0` for this provider
+  (Ollama does not report cache accounting). Treat 0 as "not
+  applicable," not "zero cache hits."
+- SSRF guard: the CLI rejects any `--llm-base-url` whose host is not
+  in `{ localhost, 127.0.0.1, [::1] }` at adapter construction time,
+  so `http://example.com/v1/` is refused before any request goes out.
+
+### Automated Phase 3 coverage (runs in CI)
+
+```bash
+cargo test --release --workspace
+```
+
+pulls in the five e2e tests above. They exercise the full stack
+without network: the stdio path uses a Python subprocess that echoes
+`action_index = 0`; the LLM path uses an in-process stub
+`LlmClient` wired through the same `run_single_game_into_sink_with_extras`
+dispatcher the CLI uses. Stub or not, the paths covered are the same
+ones the real Haiku / local-Llama runs above travel through.
