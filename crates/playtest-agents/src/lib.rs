@@ -23,7 +23,9 @@ pub use eval::EvalFn;
 pub use greedy::GreedyAgent;
 pub use heuristic::{DEFAULT_TEMPERATURE, HeuristicAgent};
 pub use ismcts::{ISMCTSAgent, ISMCTSConfig, parse_config_overrides};
-pub use llm::{LlmAgent, LlmAgentConfig, LlmCallRecord, LlmSidecar, ScratchBuffer, SidecarHeader};
+pub use llm::{
+    LlmAgent, LlmAgentConfig, LlmCallRecord, LlmSidecar, ScratchBuffer, SidecarHeader, sha256_hex,
+};
 pub use random::RandomAgent;
 pub use remote::{
     HttpRemoteAgent, RemoteAgentTransport, RemoteTransportError, StdioAgent, StdioAgentConfig,

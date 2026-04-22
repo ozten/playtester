@@ -23,7 +23,7 @@ is wrapped in a uniform envelope:
 
 ```json
 {
-  "api_version": "1.1.0",
+  "api_version": "1.2.0",
   "data": { "...endpoint-specific payload..." },
   "errors": []
 }
@@ -42,7 +42,7 @@ Streaming endpoints (paths ending in `/stream`) use
 ## Versioning
 
 `API_VERSION` is semver-major.minor.patch. The current value is
-`1.1.0`.
+`1.2.0`.
 
 - **Major bump** — any breaking change to request or response JSON
   shapes: fields removed, types changed, meanings changed. Clients
@@ -54,6 +54,14 @@ Streaming endpoints (paths ending in `/stream`) use
   can ignore these.
 - **Patch bump** — wording changes to error messages, perf tweaks,
   and other non-contract adjustments.
+
+`1.2.0` (Phase 3) — additive introduction of the
+`agent_kind_not_allowed_here` (`AgentKindNotAllowedHere`) error code
+returned by `POST /api/runs` when the request body includes `"llm"` or
+`"stdio"` agent kinds. These kinds are CLI-only in Phase 3 — use
+`playtest play --agents ...` from the command line. Clients tolerant
+of unknown error codes (SHOULD treat unknown codes as the default case)
+continue to work.
 
 `1.1.0` (Phase 2.5) — additive introduction of the `http-remote` agent
 kind, the `turn_prompt` SSE frame, `POST /api/runs/{run_id}/games/
@@ -99,10 +107,10 @@ Example response (HTTP 200):
 
 ```json
 {
-  "api_version": "1.1.0",
+  "api_version": "1.2.0",
   "data": {
     "status": "ok",
-    "api_version": "1.1.0"
+    "api_version": "1.2.0"
   },
   "errors": []
 }
@@ -117,7 +125,7 @@ Example response:
 
 ```json
 {
-  "api_version": "1.1.0",
+  "api_version": "1.2.0",
   "data": [
     {
       "id": "cribbage",
@@ -142,7 +150,7 @@ Example response:
 
 ```json
 {
-  "api_version": "1.1.0",
+  "api_version": "1.2.0",
   "data": [
     { "id": "random",              "display_name": "random",              "supported_games": [] },
     { "id": "http-remote",         "display_name": "http-remote",         "supported_games": [] },
@@ -213,7 +221,7 @@ Example response (HTTP 200):
 
 ```json
 {
-  "api_version": "1.1.0",
+  "api_version": "1.2.0",
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "game": "cribbage",
@@ -253,7 +261,7 @@ Example response:
 
 ```json
 {
-  "api_version": "1.1.0",
+  "api_version": "1.2.0",
   "data": [
     {
       "id": "game-0000",
@@ -295,7 +303,7 @@ Example response:
 
 ```json
 {
-  "api_version": "1.1.0",
+  "api_version": "1.2.0",
   "data": {
     "offset": 0,
     "limit": 5,
@@ -451,7 +459,7 @@ Example success response (HTTP 200):
 
 ```json
 {
-  "api_version": "1.1.0",
+  "api_version": "1.2.0",
   "data": { "accepted": true },
   "errors": []
 }
@@ -678,6 +686,7 @@ and end-user display. `details` is optional and error-specific.
 | `IllegalActionIndex`      | 400  | `POST .../actions` sent an `action_index` >= `legal_actions.len()`. (1.1.0) |
 | `NotYourTurn`             | 400  | `POST .../actions` sent with no pending prompt for that seat. (1.1.0) |
 | `NoRemoteAgentAtSeat`     | 400  | `POST .../actions` sent for a seat that isn't backed by `http-remote`. (1.1.0) |
+| `AgentKindNotAllowedHere` | 400  | `POST /api/runs` referenced a CLI-only agent kind (`llm`, `stdio`). Use `playtest play` from the command line. (1.2.0) |
 | `RunNotFound`             | 404  | `run_id` is unknown or malformed.              |
 | `GameNotFound`            | 404  | `game_id` has no log file on disk.             |
 | `Internal`                | 500  | Unexpected server-side failure.                |

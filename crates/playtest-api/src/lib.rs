@@ -44,8 +44,13 @@ pub use version::ApiResponse;
 /// Current wire-contract version. Bumped on any breaking change to the
 /// JSON shape produced or accepted by the server.
 ///
+/// `1.2.0` — Phase 3: additive introduction of the `AgentKindNotAllowedHere`
+/// error code returned by `POST /api/runs` when the request body includes
+/// CLI-only agent kinds (`llm`, `stdio`). Clients built against `1.1.0`
+/// and tolerant of unknown error variants continue to work.
+///
 /// `1.1.0` — Phase 2.5: additive introduction of the `http-remote`
 /// agent kind, `SseFrame::TurnPrompt`, and `POST /api/runs/{run_id}/
 /// games/{game_id}/actions`. Clients built against `1.0.0` and
 /// tolerant of unknown fields continue to work.
-pub const API_VERSION: &str = "1.1.0";
+pub const API_VERSION: &str = "1.2.0";

@@ -65,6 +65,12 @@ pub enum ApiErrorCode {
     /// `http-remote` agent. AI-only seats cannot be driven via HTTP.
     /// Phase 2.5.
     NoRemoteAgentAtSeat,
+
+    /// A `POST /api/runs` payload named an agent kind that is CLI-only
+    /// in the current phase — today `llm` and `stdio`. Server callers
+    /// must use `playtest play --agents ...` from the command line.
+    /// Phase 3.
+    AgentKindNotAllowedHere,
 }
 
 /// Uniform error body, shared by every endpoint.
@@ -124,7 +130,8 @@ pub fn http_status(code: ApiErrorCode) -> u16 {
         | ApiErrorCode::StaleTick
         | ApiErrorCode::IllegalActionIndex
         | ApiErrorCode::NotYourTurn
-        | ApiErrorCode::NoRemoteAgentAtSeat => 400,
+        | ApiErrorCode::NoRemoteAgentAtSeat
+        | ApiErrorCode::AgentKindNotAllowedHere => 400,
         ApiErrorCode::RunNotFound | ApiErrorCode::GameNotFound => 404,
         ApiErrorCode::Internal => 500,
         ApiErrorCode::NotImplemented => 501,

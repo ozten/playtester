@@ -20,7 +20,7 @@ use futures::Stream;
 use playtest_api::{
     ApiError, ApiErrorCode, ApiResponse, CreateRunRequest, RunStatus, RunSummary,
 };
-use playtest_registry::agent_registry::{KNOWN_AGENTS, is_known_agent};
+use playtest_registry::agent_registry::{KNOWN_AGENTS, is_known_agent, split_agent_spec};
 use playtest_registry::game_registry::{KNOWN_GAMES, lookup as lookup_game};
 use uuid::Uuid;
 
@@ -57,6 +57,21 @@ async fn create_run(
                 ApiErrorCode::UnknownAgent,
                 format!("unknown agent: {name}"),
                 serde_json::json!({"agent": name, "known": KNOWN_AGENTS}),
+            )));
+        }
+        // Reject CLI-only kinds at the HTTP boundary. Both `llm` and
+        // `stdio` require caller-supplied dependencies (API key, child
+        // process path) that the HTTP server deliberately does not
+        // accept over the wire — Phase 3 keeps these as CLI-only kinds.
+        let (base, _params) = split_agent_spec(name);
+        if base == "llm" || base == "stdio" {
+            return Err(api_error(ApiError::with_details(
+                ApiErrorCode::AgentKindNotAllowedHere,
+                format!(
+                    "agent kind '{base}' is CLI-only; use `playtest play --agents ...` from \
+                     the command line"
+                ),
+                serde_json::json!({"agent": name, "kind": base}),
             )));
         }
     }

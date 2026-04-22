@@ -135,6 +135,13 @@
               "NoRemoteAgentAtSeat"
             ],
             "type": "string"
+          },
+          {
+            "description": "A `POST /api/runs` payload named an agent kind that is CLI-only in the current phase — today `llm` and `stdio`. Server callers must use `playtest play --agents ...` from the command line. Phase 3.",
+            "enum": [
+              "AgentKindNotAllowedHere"
+            ],
+            "type": "string"
           }
         ]
       },
@@ -689,7 +696,7 @@
   "info": {
     "description": "Localhost HTTP + Server-Sent Events surface for the playtester engine. See docs/api-contract.md for versioning policy, SSE semantics, and error catalog.",
     "title": "Playtester API",
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -779,9 +786,9 @@
             "content": {
               "application/json": {
                 "example": {
-                  "api_version": "1.1.0",
+                  "api_version": "1.2.0",
                   "data": {
-                    "api_version": "1.1.0",
+                    "api_version": "1.2.0",
                     "status": "ok"
                   },
                   "errors": []

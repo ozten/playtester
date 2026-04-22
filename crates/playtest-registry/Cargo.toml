@@ -24,3 +24,4 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 
 [dev-dependencies]
 async-trait.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "sync"] }

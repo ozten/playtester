@@ -11,14 +11,17 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use playtest_adapters::{ProductionClock, ProductionRng};
-use playtest_agents::RemoteAgentTransport;
+use playtest_agents::{LlmSidecar, RemoteAgentTransport, StdioAgentConfig};
 use playtest_core::{Agent, Game, GameLoop};
 use playtest_cribbage::{CribbageConfig, CribbageGame, Event as CribbageEvent};
 use playtest_log::{EventLogWriter, LogHeader, LogRecord, SCHEMA_VERSION, compute_config_hash};
-use playtest_ports::{Clock, GameEventSink};
+use playtest_ports::{Clock, GameEventSink, LlmClient};
 use playtest_shipwreck::{Event as ShipWreckEvent, ShipWreckConfig, ShipWreckGame};
 
-use crate::agent_registry::{AgentBuildCtx, build_cribbage_agent, build_shipwreck_agent};
+use crate::agent_registry::{
+    AgentBuildCtx, build_cribbage_agent, build_shipwreck_agent,
+    validate_llm_provider_consistency,
+};
 use crate::game_registry::RegisteredGame;
 
 /// Optional per-seat remote transports. `None` (or a vec of all-`None`)
@@ -27,12 +30,76 @@ use crate::game_registry::RegisteredGame;
 /// for seats whose agent name is `"http-remote"`.
 pub type RemoteTransports = [Option<Arc<dyn RemoteAgentTransport>>];
 
+/// LLM-related dependencies for a single game.
+///
+/// Every `llm:*` seat in the game shares one `client` and one `sidecar`
+/// (the sidecar is `Option<_>` so library tests can exercise `build_llm`
+/// without wiring a file-system write path).
+#[derive(Clone)]
+pub struct LlmCliDeps {
+    pub client: Arc<dyn LlmClient>,
+    pub sidecar: Option<Arc<LlmSidecar>>,
+    pub model: String,
+    pub max_tokens: Option<u32>,
+}
+
+impl core::fmt::Debug for LlmCliDeps {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LlmCliDeps")
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .field("sidecar", &self.sidecar.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Optional run-time dependencies layered on top of the base
+/// `run_single_game_into_sink` signature. Callers who don't care
+/// about LLM or stdio can pass `None` for everything and match the
+/// legacy shape.
+#[derive(Default)]
+pub struct RunExtras<'a> {
+    pub remote_transports: Option<&'a RemoteTransports>,
+    pub llm_deps: Option<&'a LlmCliDeps>,
+    pub stdio_cfg: Option<&'a StdioAgentConfig>,
+}
+
+impl<'a> RunExtras<'a> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with_remote_transports(mut self, t: &'a RemoteTransports) -> Self {
+        self.remote_transports = Some(t);
+        self
+    }
+
+    #[must_use]
+    pub fn with_llm_deps(mut self, d: &'a LlmCliDeps) -> Self {
+        self.llm_deps = Some(d);
+        self
+    }
+
+    #[must_use]
+    pub fn with_stdio_cfg(mut self, c: &'a StdioAgentConfig) -> Self {
+        self.stdio_cfg = Some(c);
+        self
+    }
+}
+
 /// Run one game, writing every log line (header + events + final) to
 /// `sink`.
 ///
 /// `remote_transports`, when supplied, must have `agent_names.len()`
 /// entries. `None` for a seat means that seat is built with the normal
 /// factory path (no remote transport).
+///
+/// This is the legacy two-arg-and-change entry point preserved for the
+/// HTTP-remote callsite in `playtest-server`. For Phase-3 callers who
+/// need LLM / stdio context, use
+/// [`run_single_game_into_sink_with_extras`].
 ///
 /// # Errors
 /// Propagates I/O, serialisation, and engine errors.
@@ -44,7 +111,30 @@ pub fn run_single_game_into_sink(
     remote_transports: Option<&RemoteTransports>,
     sink: &mut dyn GameEventSink,
 ) -> Result<()> {
-    if let Some(t) = remote_transports
+    let mut extras = RunExtras::new();
+    if let Some(t) = remote_transports {
+        extras = extras.with_remote_transports(t);
+    }
+    run_single_game_into_sink_with_extras(game, agent_names, seed, fixed_time, &extras, sink)
+}
+
+/// Phase-3 extension of [`run_single_game_into_sink`]. Every optional
+/// per-seat dependency (`llm` / `stdio`) is bundled into
+/// [`RunExtras`]; any absent field stays `None` and the corresponding
+/// kind cannot be built.
+///
+/// # Errors
+/// Propagates I/O, serialisation, and engine errors. Also errors if
+/// `extras.remote_transports.len()` mismatches `agent_names.len()`.
+pub fn run_single_game_into_sink_with_extras(
+    game: &RegisteredGame,
+    agent_names: &[String],
+    seed: u64,
+    fixed_time: Option<u64>,
+    extras: &RunExtras<'_>,
+    sink: &mut dyn GameEventSink,
+) -> Result<()> {
+    if let Some(t) = extras.remote_transports
         && t.len() != agent_names.len()
     {
         anyhow::bail!(
@@ -53,36 +143,50 @@ pub fn run_single_game_into_sink(
             agent_names.len()
         );
     }
+    // Reject mixed-provider LLM seats up front. The run has exactly one
+    // `ProductionLlmClient` (see `LlmCliDeps`), so disagreement here
+    // would surface mid-game as a silent fallback. Fail loud.
+    validate_llm_provider_consistency(agent_names)?;
     match game {
-        RegisteredGame::Cribbage(g) => {
-            run_cribbage_into_sink(*g, agent_names, seed, fixed_time, remote_transports, sink)
-        }
+        RegisteredGame::Cribbage(g) => run_cribbage_into_sink(*g, agent_names, seed, fixed_time, extras, sink),
         RegisteredGame::ShipWreck(g) => {
-            run_shipwreck_into_sink(*g, agent_names, seed, fixed_time, remote_transports, sink)
+            run_shipwreck_into_sink(*g, agent_names, seed, fixed_time, extras, sink)
         }
     }
 }
 
-fn build_ctx_for_seat(
-    i: usize,
-    seed: u64,
-    remote_transports: Option<&RemoteTransports>,
-) -> AgentBuildCtx {
+fn build_ctx_for_seat(i: usize, seed: u64, extras: &RunExtras<'_>) -> AgentBuildCtx {
     // Derive a distinct per-agent seed: master_seed XORed with a
     // SplitMix-style bit-mix of the agent index. Keeps the two
     // agents' RNG streams independent of the chance RNG and of
     // each other.
-    let mix =
-        0x9E37_79B9_7F4A_7C15u64.wrapping_mul(u64::try_from(i + 1).expect("small i"));
+    let mix = 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(u64::try_from(i + 1).expect("small i"));
     let agent_seed = seed ^ mix;
     let player = u8::try_from(i).expect("player index fits in u8");
-    let remote_transport = remote_transports
+    let remote_transport = extras
+        .remote_transports
         .and_then(|t| t.get(i))
         .and_then(Clone::clone);
+    let (llm_client, llm_model, llm_max_tokens, llm_sidecar) = extras.llm_deps.map_or(
+        (None, None, None, None),
+        |d| {
+            (
+                Some(d.client.clone()),
+                Some(d.model.clone()),
+                d.max_tokens,
+                d.sidecar.clone(),
+            )
+        },
+    );
     AgentBuildCtx {
         seed: agent_seed,
         player,
         remote_transport,
+        llm_client,
+        llm_sidecar,
+        llm_model,
+        llm_max_tokens,
+        stdio_cfg: extras.stdio_cfg.cloned(),
     }
 }
 
@@ -91,7 +195,7 @@ fn run_cribbage_into_sink(
     agent_names: &[String],
     seed: u64,
     fixed_time: Option<u64>,
-    remote_transports: Option<&RemoteTransports>,
+    extras: &RunExtras<'_>,
     sink: &mut dyn GameEventSink,
 ) -> Result<()> {
     let cfg = CribbageConfig;
@@ -100,7 +204,7 @@ fn run_cribbage_into_sink(
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            let ctx = build_ctx_for_seat(i, seed, remote_transports);
+            let ctx = build_ctx_for_seat(i, seed, extras);
             build_cribbage_agent(name, &ctx)
         })
         .collect::<Result<Vec<_>>>()?;
@@ -161,7 +265,7 @@ fn run_shipwreck_into_sink(
     agent_names: &[String],
     seed: u64,
     fixed_time: Option<u64>,
-    remote_transports: Option<&RemoteTransports>,
+    extras: &RunExtras<'_>,
     sink: &mut dyn GameEventSink,
 ) -> Result<()> {
     // ShipWreck's config is driven by the agent count — the CLI's
@@ -175,7 +279,7 @@ fn run_shipwreck_into_sink(
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            let ctx = build_ctx_for_seat(i, seed, remote_transports);
+            let ctx = build_ctx_for_seat(i, seed, extras);
             build_shipwreck_agent(name, &ctx)
         })
         .collect::<Result<Vec<_>>>()?;

@@ -21,15 +21,18 @@
 
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use playtest_adapters::ProductionRng;
 use playtest_agents::{
     DEFAULT_TEMPERATURE, GreedyAgent, HeuristicAgent, HttpRemoteAgent, ISMCTSAgent, ISMCTSConfig,
-    RandomAgent, RemoteAgentTransport, parse_config_overrides,
+    LlmAgent, LlmAgentConfig, LlmSidecar, RandomAgent, RemoteAgentTransport, StdioAgent,
+    StdioAgentConfig, parse_config_overrides,
 };
 use playtest_core::{Agent, Game, PlayerId};
 use playtest_cribbage::{CribbageGame, cribbage_eval};
+use playtest_ports::LlmClient;
 use playtest_shipwreck::{ShipWreckGame, shipwreck_eval};
+use serde::Serialize;
 
 /// Agent names accepted by [`build_cribbage_agent`] /
 /// [`build_shipwreck_agent`] / [`build_agent`], in display order.
@@ -44,6 +47,8 @@ use playtest_shipwreck::{ShipWreckGame, shipwreck_eval};
 pub const KNOWN_AGENTS: &[&str] = &[
     "random",
     "http-remote",
+    "llm",
+    "stdio",
     "greedy-cribbage",
     "heuristic-cribbage",
     "ismcts-cribbage",
@@ -71,24 +76,49 @@ fn default_ismcts_config() -> ISMCTSConfig {
 /// Per-seat build context used by the agent factories.
 ///
 /// `seed` and `player` have the same meaning as the prior positional
-/// arguments. `remote_transport` is populated by the HTTP server when
-/// a given seat is backed by a remote client; it stays `None` for CLI
-/// calls so `http-remote` fails fast with a helpful message.
+/// arguments. The `Option<_>` fields carry optional-per-kind
+/// dependencies the caller may supply — each is consumed by exactly
+/// one agent kind and must be `Some` when that kind is built:
+///
+/// - `remote_transport` — required by `http-remote`; server-populated.
+/// - `llm_client`, `llm_model`, `llm_max_tokens`, `llm_sidecar` —
+///   required by `llm`; CLI-populated (see `crates/playtest-cli/src/
+///   commands/play.rs`). `Arc<_>` around the client and the sidecar so
+///   all LLM seats in one run share a single provider budget and a
+///   single sidecar file.
+/// - `stdio_cfg` — required by `stdio`; CLI-populated from
+///   `--stdio-cmd` + `--stdio-arg`.
+///
+/// CLI helpers default every field to `None`; see [`AgentBuildCtx::cli`].
 #[derive(Clone)]
 pub struct AgentBuildCtx {
     pub seed: u64,
     pub player: PlayerId,
     pub remote_transport: Option<Arc<dyn RemoteAgentTransport>>,
+    pub llm_client: Option<Arc<dyn LlmClient>>,
+    pub llm_sidecar: Option<Arc<LlmSidecar>>,
+    pub llm_model: Option<String>,
+    pub llm_max_tokens: Option<u32>,
+    pub stdio_cfg: Option<StdioAgentConfig>,
 }
 
 impl AgentBuildCtx {
-    /// Ctx for a CLI caller — no remote transport.
+    /// Ctx for a CLI caller — no transports, no LLM, no stdio.
+    ///
+    /// Preserved as the zero-configured constructor so every existing
+    /// call site that only cares about `seed` + `player` still compiles
+    /// unchanged.
     #[must_use]
     pub fn cli(seed: u64, player: PlayerId) -> Self {
         Self {
             seed,
             player,
             remote_transport: None,
+            llm_client: None,
+            llm_sidecar: None,
+            llm_model: None,
+            llm_max_tokens: None,
+            stdio_cfg: None,
         }
     }
 }
@@ -99,6 +129,11 @@ impl core::fmt::Debug for AgentBuildCtx {
             .field("seed", &self.seed)
             .field("player", &self.player)
             .field("remote_transport", &self.remote_transport.is_some())
+            .field("llm_client", &self.llm_client.is_some())
+            .field("llm_sidecar", &self.llm_sidecar.is_some())
+            .field("llm_model", &self.llm_model)
+            .field("llm_max_tokens", &self.llm_max_tokens)
+            .field("stdio_cfg", &self.stdio_cfg)
             .finish()
     }
 }
@@ -112,6 +147,59 @@ pub fn split_agent_spec(spec: &str) -> (&str, Option<&str>) {
         Some((name, params)) => (name, Some(params)),
         None => (spec, None),
     }
+}
+
+/// Scan an `llm:...` parameterization for a `provider=<name>` override
+/// and return the value (trimmed). Returns `None` when the spec isn't
+/// an `llm:` kind at all, or when no `provider=` override is present.
+///
+/// Used by [`validate_llm_provider_consistency`] and by the CLI to
+/// pick the one provider the whole run must speak.
+#[must_use]
+pub fn llm_provider_from_spec(spec: &str) -> Option<&str> {
+    let (base, params) = split_agent_spec(spec);
+    if base != "llm" {
+        return None;
+    }
+    let params = params?;
+    for pair in params.split(',') {
+        let pair = pair.trim();
+        if let Some((k, v)) = pair.split_once('=')
+            && k.trim() == "provider"
+        {
+            return Some(v.trim());
+        }
+    }
+    None
+}
+
+/// Ensure every `llm:...` seat in `agent_names` names a compatible
+/// `provider=` override. `model=` may differ; the Anthropic API accepts
+/// per-request model selection. A single `ProductionLlmClient` is
+/// constructed per run, so two seats demanding different providers
+/// cannot both be served — reject the run before it starts.
+///
+/// # Errors
+/// Returns an error naming the conflicting seats + providers when two
+/// `llm:*` seats specify different `provider=` values.
+pub fn validate_llm_provider_consistency(agent_names: &[String]) -> Result<()> {
+    let mut first: Option<(usize, &str)> = None;
+    for (i, spec) in agent_names.iter().enumerate() {
+        let Some(p) = llm_provider_from_spec(spec) else {
+            continue;
+        };
+        if let Some((j, prior)) = first {
+            if prior != p {
+                bail!(
+                    "llm seats must agree on `provider`: seat {j} says `{prior}`, seat {i} \
+                     says `{p}` — one ProductionLlmClient is built per run"
+                );
+            }
+        } else {
+            first = Some((i, p));
+        }
+    }
+    Ok(())
 }
 
 /// Is `spec` either a base name in [`KNOWN_AGENTS`] or a parameterized
@@ -167,25 +255,136 @@ where
     )))
 }
 
-/// Generic agent builder — handles agent kinds that don't depend on a
-/// per-game eval function (today: `"random"` and `"http-remote"`).
+/// Rules text bundled into both Cribbage-side and ShipWreck-side
+/// system blocks. `include_str!` pulls the file in at compile time so
+/// the binary needs no runtime asset plumbing.
+///
+/// Phase 3 simplification: the `rules_for_llm.md` files combine the
+/// rules body with any card/state catalog the model needs. We therefore
+/// set `card_catalog = Arc::from("")` below and let the one file be the
+/// single source of truth. If future work splits the catalog out, add a
+/// second `include_str!` and wire it through [`LlmAgentConfig::card_catalog`].
+const CRIBBAGE_RULES_FOR_LLM: &str =
+    include_str!("../../games/cribbage/rules_for_llm.md");
+const SHIPWRECK_RULES_FOR_LLM: &str =
+    include_str!("../../games/shipwreck/rules_for_llm.md");
+
+/// Default output-token cap when the CLI doesn't supply one. Matches
+/// the plan's "--llm-max-tokens defaults to 1024" note.
+const DEFAULT_LLM_MAX_TOKENS: u32 = 1024;
+
+/// Construct an [`LlmAgent<G>`] from `ctx`, validating the required
+/// dependencies up front and producing a helpful CLI-pointing error if
+/// any are absent.
+fn build_llm<G>(
+    ctx: &AgentBuildCtx,
+    rules_text: &'static str,
+) -> Result<Box<dyn Agent<G>>>
+where
+    G: Game + ?Sized + Send + Sync + 'static,
+    G::State: Send + Sync + 'static,
+    G::PublicView: Send + Sync + Serialize + 'static,
+    G::Action: Send + Sync + Serialize + 'static,
+{
+    let llm = ctx.llm_client.as_ref().ok_or_else(|| {
+        anyhow!(
+            "llm agent requires an LlmClient + --model; pass `--model <name>` (and, for \
+             openai_compat, `--llm-base-url`) to `playtest play`"
+        )
+    })?;
+    let model = ctx.llm_model.as_ref().ok_or_else(|| {
+        anyhow!(
+            "llm agent requires a model name; pass `--model <name>` to `playtest play`"
+        )
+    })?;
+    let max_tokens = ctx.llm_max_tokens.unwrap_or(DEFAULT_LLM_MAX_TOKENS);
+
+    let cfg = LlmAgentConfig {
+        llm: llm.clone(),
+        model: model.clone(),
+        rules_text: Arc::from(rules_text),
+        // See CRIBBAGE_RULES_FOR_LLM doc comment: the single rules file
+        // carries the card catalog too, so we pass an empty string here.
+        card_catalog: Arc::from(""),
+        sidecar: ctx.llm_sidecar.clone(),
+        max_tokens,
+        temperature: None,
+    };
+    Ok(Box::new(LlmAgent::<G>::new(ctx.player, cfg)))
+}
+
+/// Construct a [`StdioAgent<G>`] from `ctx`. The subprocess is *not*
+/// spawned here — `StdioAgent::new` validates the command path and
+/// defers spawn to the first `choose` call.
+fn build_stdio<G>(
+    ctx: &AgentBuildCtx,
+    game_name: &'static str,
+) -> Result<Box<dyn Agent<G>>>
+where
+    G: Game + ?Sized + Send + Sync + 'static,
+    G::State: Send + Sync + 'static,
+    G::PublicView: Send + Sync + Serialize + Clone + 'static,
+    G::Action: Send + Sync + Serialize + Clone + 'static,
+{
+    let cfg = ctx.stdio_cfg.as_ref().ok_or_else(|| {
+        anyhow!(
+            "stdio agent requires a StdioAgentConfig; pass `--stdio-cmd <path>` (and any \
+             `--stdio-arg <arg>` values) to `playtest play`"
+        )
+    })?;
+    let agent = StdioAgent::<G>::new(ctx.player, game_name, cfg.clone())
+        .map_err(|e| anyhow!("stdio agent build failed: {e}"))?;
+    Ok(Box::new(agent))
+}
+
+/// Dispatch `llm:...` / `stdio:...` / per-game eval-free kinds that can
+/// be built from `ctx` alone. Used by both per-game factories as a
+/// shared fallback — centralises the game-agnostic arms (`random`,
+/// `http-remote`, `llm`, `stdio`) in one place.
 ///
 /// Per-game search agents (`greedy-cribbage`, `heuristic-cribbage`,
 /// `greedy-shipwreck`, `heuristic-shipwreck`) must be built via
 /// [`build_cribbage_agent`] / [`build_shipwreck_agent`] respectively,
 /// because they need the concrete game's eval function at construction.
 ///
+/// `llm` and `stdio` need a rules-text and a game-name handle from the
+/// caller, so the per-game factories pre-resolve those and pass them in;
+/// here we default to empty/"unknown" because the generic path isn't
+/// the intended entry point for those kinds. Prefer calling
+/// [`build_cribbage_agent`] / [`build_shipwreck_agent`] — they round-trip
+/// through this function with the right game-specific context.
+///
 /// # Errors
 /// Returns an error listing [`KNOWN_AGENTS`] if `name` is not
 /// registered or is a per-game kind in disguise (e.g. trying to build
 /// `greedy-cribbage` via the generic path). Returns an error for
-/// `http-remote` when `ctx.remote_transport` is `None`.
+/// `http-remote` when `ctx.remote_transport` is `None`, for `llm` when
+/// the LLM client/model fields are `None`, and for `stdio` when
+/// `ctx.stdio_cfg` is `None`.
 pub fn build_agent<G>(name: &str, ctx: &AgentBuildCtx) -> Result<Box<dyn Agent<G>>>
 where
-    G: Game + ?Sized + 'static,
+    G: Game + ?Sized + Send + Sync + 'static,
     G::State: Send + Sync + 'static,
-    G::PublicView: Send + Sync + 'static,
-    G::Action: Send + Sync + serde::Serialize + 'static,
+    G::PublicView: Send + Sync + Serialize + Clone + 'static,
+    G::Action: Send + Sync + Serialize + Clone + 'static,
+{
+    build_agent_with_game_metadata::<G>(name, ctx, "", "unknown")
+}
+
+/// Lower-level entry used by the per-game factories: accepts the
+/// rules-text and game-name handles the `llm` / `stdio` builders need.
+/// The generic [`build_agent`] is a thin shim that passes empty strings.
+fn build_agent_with_game_metadata<G>(
+    name: &str,
+    ctx: &AgentBuildCtx,
+    llm_rules_text: &'static str,
+    stdio_game_name: &'static str,
+) -> Result<Box<dyn Agent<G>>>
+where
+    G: Game + ?Sized + Send + Sync + 'static,
+    G::State: Send + Sync + 'static,
+    G::PublicView: Send + Sync + Serialize + Clone + 'static,
+    G::Action: Send + Sync + Serialize + Clone + 'static,
 {
     match name {
         "random" => {
@@ -193,6 +392,8 @@ where
             Ok(Box::new(RandomAgent::<G, _>::new(rng)))
         }
         "http-remote" => build_http_remote::<G>(ctx),
+        "llm" => build_llm::<G>(ctx, llm_rules_text),
+        "stdio" => build_stdio::<G>(ctx, stdio_game_name),
         other => bail!(
             "unknown or non-generic agent: {other}; known: {}",
             KNOWN_AGENTS.join(", ")
@@ -216,7 +417,14 @@ pub fn build_cribbage_agent(
 ) -> Result<Box<dyn Agent<CribbageGame>>> {
     let (name, params) = split_agent_spec(spec);
     match name {
-        "random" | "http-remote" => build_agent::<CribbageGame>(name, ctx),
+        "random" | "http-remote" | "llm" | "stdio" => {
+            build_agent_with_game_metadata::<CribbageGame>(
+                name,
+                ctx,
+                CRIBBAGE_RULES_FOR_LLM,
+                CribbageGame::NAME,
+            )
+        }
         "greedy-cribbage" => Ok(Box::new(GreedyAgent::<CribbageGame>::new(
             ctx.player,
             cribbage_eval,
@@ -260,7 +468,14 @@ pub fn build_shipwreck_agent(
 ) -> Result<Box<dyn Agent<ShipWreckGame>>> {
     let (name, params) = split_agent_spec(spec);
     match name {
-        "random" | "http-remote" => build_agent::<ShipWreckGame>(name, ctx),
+        "random" | "http-remote" | "llm" | "stdio" => {
+            build_agent_with_game_metadata::<ShipWreckGame>(
+                name,
+                ctx,
+                SHIPWRECK_RULES_FOR_LLM,
+                ShipWreckGame::NAME,
+            )
+        }
         "greedy-shipwreck" => Ok(Box::new(GreedyAgent::<ShipWreckGame>::new(
             ctx.player,
             shipwreck_eval,
@@ -343,6 +558,11 @@ mod tests {
             seed: 42,
             player: 0,
             remote_transport: Some(Arc::new(NeverCalledTransport)),
+            llm_client: None,
+            llm_sidecar: None,
+            llm_model: None,
+            llm_max_tokens: None,
+            stdio_cfg: None,
         };
         build_cribbage_agent("http-remote", &ctx).expect("cribbage http-remote");
         build_shipwreck_agent("http-remote", &ctx).expect("shipwreck http-remote");
@@ -354,6 +574,11 @@ mod tests {
             seed: 42,
             player: 0,
             remote_transport: Some(Arc::new(NeverCalledTransport)),
+            llm_client: None,
+            llm_sidecar: None,
+            llm_model: None,
+            llm_max_tokens: None,
+            stdio_cfg: None,
         };
         // Having a transport present shouldn't break non-remote kinds.
         build_cribbage_agent("random", &ctx).expect("random with transport present");

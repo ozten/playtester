@@ -17,6 +17,7 @@ path = "src/main.rs"
 playtest-core.workspace = true
 playtest-ports.workspace = true
 playtest-adapters.workspace = true
+playtest-agents.workspace = true
 playtest-log.workspace = true
 playtest-metrics.workspace = true
 playtest-cribbage.workspace = true
@@ -28,10 +29,11 @@ clap.workspace = true
 rayon.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync"] }
+url = "2"
 
 [dev-dependencies]
 assert_cmd = "2"
-playtest-agents.workspace = true
+async-trait.workspace = true
 predicates = "3"
 tempfile = "3"
