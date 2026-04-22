@@ -28,9 +28,12 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use std::sync::Arc;
+
 use crate::routes::{ApiResult, api_error};
 use crate::sse::line_to_sse_frame;
 use crate::state::AppState;
+use crate::turn_coordinator::TurnCoordinator;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -300,11 +303,18 @@ async fn game_stream(
 
     // Capture the run's game broadcaster *first*, before reading the
     // file tail, so any events emitted during catch-up get buffered in
-    // the 1024-slot broadcast channel rather than lost.
-    let subscriber: Option<broadcast::Receiver<String>> = state
-        .active_runs
-        .get(&run_id)
-        .and_then(|h| h.game_broadcasters.get(&gid).map(|e| e.subscribe()));
+    // the 1024-slot broadcast channel rather than lost. The turn
+    // coordinator is captured from the same snapshot so reconnect
+    // replay uses the same view of live state.
+    let (subscriber, coordinator): (
+        Option<broadcast::Receiver<String>>,
+        Option<Arc<TurnCoordinator>>,
+    ) = state.active_runs.get(&run_id).map_or((None, None), |h| {
+        (
+            h.game_broadcasters.get(&gid).map(|e| e.subscribe()),
+            h.turn_coordinators.get(&gid).map(|e| e.value().clone()),
+        )
+    });
 
     let path = state.run_dir(run_id).join(format!("{gid}.jsonl"));
 
@@ -324,7 +334,7 @@ async fn game_stream(
 
     let last_event_id: u64 = parse_last_event_id(&headers);
 
-    let s = build_game_stream(path, subscriber, last_event_id).await;
+    let s = build_game_stream(path, subscriber, coordinator, last_event_id).await;
 
     Ok(Sse::new(s).keep_alive(
         KeepAlive::new()
@@ -344,6 +354,7 @@ fn parse_last_event_id(headers: &HeaderMap) -> u64 {
 async fn build_game_stream(
     path: PathBuf,
     subscriber: Option<broadcast::Receiver<String>>,
+    coordinator: Option<Arc<TurnCoordinator>>,
     last_event_id: u64,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     // Read the file once up front. Events emitted after this snapshot
@@ -378,6 +389,22 @@ async fn build_game_stream(
             {
                 highest_event_tick = Some(highest_event_tick.map_or(t, |m| m.max(t)));
             }
+            let ev = frame_to_event(&frame, tick);
+            yield Ok(ev);
+        }
+
+        // After JSONL catch-up, if the game is waiting on a remote
+        // action, emit the pending turn_prompt once so the reconnected
+        // (or fresh) client sees the current decision point. The live
+        // feed below may also emit a turn_prompt if the engine reaches
+        // the next decision before this handler yields — the second
+        // one will carry a different prompt_id, so the client cleanly
+        // overwrites the first.
+        if let Some(coord) = coordinator.as_ref()
+            && let Some(pending) = coord.pending_snapshot()
+            && let Ok(line) = pending.to_sse_line()
+            && let Some((tick, frame)) = line_to_sse_frame(&line)
+        {
             let ev = frame_to_event(&frame, tick);
             yield Ok(ev);
         }
