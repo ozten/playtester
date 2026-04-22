@@ -8,8 +8,23 @@
 //! uses `async_trait` which is object-safe, but later migration to native
 //! async-in-traits would drop that. Call sites should prefer generics
 //! (`<L: LlmClient>`) over trait objects where possible.
+//!
+//! # Shape (Phase 3)
+//!
+//! [`LlmRequest`] and [`LlmResponse`] carry Anthropic prompt-caching
+//! primitives:
+//!
+//! - `system_blocks: Vec<SystemBlock>` — each block carries a plain
+//!   `cache: bool`; the production adapter emits
+//!   `"cache_control": {"type": "ephemeral"}` on blocks where `cache` is
+//!   `true` and omits it otherwise.
+//! - `messages: Vec<ChatMessage>` — the chat turn sequence (role + text).
+//! - Per-call token accounting on the response side includes
+//!   `cache_read_input_tokens` and `cache_creation_input_tokens`. Providers
+//!   that don't report these leave them at 0.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 /// Errors produced by the [`LlmClient`] port.
 #[derive(Debug, thiserror::Error)]
@@ -27,22 +42,59 @@ pub enum LlmError {
     TapeDivergence,
 }
 
-/// A single LLM request. Shape is intentionally minimal; Phase 3 will
-/// extend it with prompt caching, model selection, and tool use.
-#[derive(Debug, Clone)]
+/// Chat role for a single [`ChatMessage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatRole {
+    System,
+    User,
+    Assistant,
+}
+
+/// A single chat message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: ChatRole,
+    pub content: String,
+}
+
+/// A single block within the system prompt.
+///
+/// `cache` is a plain bool. `true` means the Anthropic production adapter
+/// emits `"cache_control": {"type": "ephemeral"}` for this block; `false`
+/// means omit `cache_control` entirely.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemBlock {
+    pub text: String,
+    pub cache: bool,
+}
+
+/// A single LLM request.
+///
+/// The shape carries Anthropic prompt-caching primitives directly
+/// (`system_blocks`) so adapters can emit cache breakpoints without
+/// reinterpreting flat prompt strings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmRequest {
-    pub system: Option<String>,
-    pub user: String,
+    pub system_blocks: Vec<SystemBlock>,
+    pub messages: Vec<ChatMessage>,
+    pub model: String,
     pub max_tokens: u32,
+    pub temperature: Option<f32>,
 }
 
 /// A single LLM response. Fields are the subset we know we will need for
 /// post-game critique (Phase 5) and cost observability (Phase 3).
-#[derive(Debug, Clone)]
+///
+/// `cache_read_input_tokens` and `cache_creation_input_tokens` default to
+/// 0 for providers that don't report them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmResponse {
     pub text: String,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    pub cache_read_input_tokens: u32,
+    pub cache_creation_input_tokens: u32,
 }
 
 /// An asynchronous LLM client.

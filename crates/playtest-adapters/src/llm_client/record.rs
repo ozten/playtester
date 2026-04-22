@@ -4,6 +4,10 @@
 //! Like [`RecordFileSystem`](crate::filesystem::RecordFileSystem), this
 //! uses interior mutability: `LlmClient::complete` takes `&self` (async
 //! clients are typically shared), but the tape needs `&mut`.
+//!
+//! The tape encoding is internal to this crate. It is a direct
+//! `serde_json` projection of [`LlmRequest`]/[`LlmResponse`]; Phase 3's
+//! shape extension is a clean rewrite with no versioned migration.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -45,21 +49,13 @@ impl<C: LlmClient + Send + Sync> RecordLlmClient<C> {
 }
 
 pub(super) fn encode_request(req: &LlmRequest) -> Value {
-    json!({
-        "system": req.system,
-        "user": req.user,
-        "max_tokens": req.max_tokens,
-    })
+    serde_json::to_value(req).expect("LlmRequest serializes cleanly")
 }
 
 fn encode_response(result: &Result<LlmResponse, LlmError>) -> Value {
     match result {
         Ok(r) => json!({
-            "ok": {
-                "text": r.text,
-                "input_tokens": r.input_tokens,
-                "output_tokens": r.output_tokens,
-            }
+            "ok": serde_json::to_value(r).expect("LlmResponse serializes cleanly"),
         }),
         Err(LlmError::NotConfigured) => json!({ "err_not_configured": {} }),
         Err(LlmError::BudgetExceeded {

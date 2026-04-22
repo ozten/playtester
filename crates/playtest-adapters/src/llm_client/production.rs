@@ -28,15 +28,21 @@ impl LlmClient for ProductionLlmClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use playtest_ports::{ChatMessage, ChatRole};
 
     #[tokio::test]
     async fn production_returns_not_configured() {
         let c = ProductionLlmClient::new();
         let err = c
             .complete(LlmRequest {
-                system: None,
-                user: "hi".into(),
+                system_blocks: vec![],
+                messages: vec![ChatMessage {
+                    role: ChatRole::User,
+                    content: "hi".into(),
+                }],
+                model: "claude-test".into(),
                 max_tokens: 16,
+                temperature: None,
             })
             .await
             .unwrap_err();

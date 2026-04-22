@@ -11,7 +11,9 @@ use playtest_adapters::{
     ProductionLlmClient, ProductionRng, RecordClock, RecordFileSystem, RecordLlmClient, RecordRng,
     StubFileSystem, StubLlmClient,
 };
-use playtest_ports::{Clock, FileSystem, LlmClient, LlmRequest, Rng};
+use playtest_ports::{
+    ChatMessage, ChatRole, Clock, FileSystem, LlmClient, LlmRequest, Rng, SystemBlock,
+};
 use tempfile::tempdir;
 
 /// Tiny "fake game" that drives a Clock and an Rng in a fixed pattern.
@@ -130,13 +132,23 @@ async fn llm_client_record_then_playback_replays_responses() {
     let tape = dir.path().join("llm.jsonl");
 
     let req = LlmRequest {
-        system: Some("you are a test".into()),
-        user: "say hi".into(),
+        system_blocks: vec![SystemBlock {
+            text: "you are a test".into(),
+            cache: true,
+        }],
+        messages: vec![ChatMessage {
+            role: ChatRole::User,
+            content: "say hi".into(),
+        }],
+        model: "claude-test".into(),
         max_tokens: 16,
+        temperature: Some(0.7),
     };
 
     let recorded = {
-        let inner = StubLlmClient::new("hi back").with_token_counts(4, 2);
+        let inner = StubLlmClient::new("hi back")
+            .with_token_counts(4, 2)
+            .with_cache_tokens(5, 1);
         let mut record_llm = RecordLlmClient::create(inner, &tape).unwrap();
         let resp = record_llm.complete(req.clone()).await.unwrap();
         let prod_inner = ProductionLlmClient::new();
@@ -154,6 +166,16 @@ async fn llm_client_record_then_playback_replays_responses() {
     assert_eq!(recorded.0.text, replayed.text);
     assert_eq!(recorded.0.input_tokens, replayed.input_tokens);
     assert_eq!(recorded.0.output_tokens, replayed.output_tokens);
+    assert_eq!(
+        recorded.0.cache_read_input_tokens,
+        replayed.cache_read_input_tokens
+    );
+    assert_eq!(
+        recorded.0.cache_creation_input_tokens,
+        replayed.cache_creation_input_tokens
+    );
+    assert_eq!(replayed.cache_read_input_tokens, 5);
+    assert_eq!(replayed.cache_creation_input_tokens, 1);
     assert!(matches!(
         recorded.1,
         playtest_ports::LlmError::NotConfigured
@@ -170,9 +192,14 @@ async fn llm_client_playback_with_diverging_request_returns_tape_divergence() {
         let mut record_llm = RecordLlmClient::create(inner, &tape).unwrap();
         let _ = record_llm
             .complete(LlmRequest {
-                system: None,
-                user: "first".into(),
+                system_blocks: vec![],
+                messages: vec![ChatMessage {
+                    role: ChatRole::User,
+                    content: "first".into(),
+                }],
+                model: "claude-test".into(),
                 max_tokens: 8,
+                temperature: None,
             })
             .await
             .unwrap();
@@ -182,9 +209,14 @@ async fn llm_client_playback_with_diverging_request_returns_tape_divergence() {
     let playback = PlaybackLlmClient::open(&tape).unwrap();
     let err = playback
         .complete(LlmRequest {
-            system: None,
-            user: "different".into(),
+            system_blocks: vec![],
+            messages: vec![ChatMessage {
+                role: ChatRole::User,
+                content: "different".into(),
+            }],
+            model: "claude-test".into(),
             max_tokens: 8,
+            temperature: None,
         })
         .await
         .unwrap_err();

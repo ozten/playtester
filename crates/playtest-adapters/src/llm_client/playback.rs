@@ -46,22 +46,9 @@ impl PlaybackLlmClient {
 
 fn decode_response(out: &Value) -> Result<LlmResponse, LlmError> {
     if let Some(ok) = out.get("ok") {
-        let text = ok
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
-        let input_tokens =
-            u32::try_from(ok.get("input_tokens").and_then(Value::as_u64).unwrap_or(0))
-                .unwrap_or(u32::MAX);
-        let output_tokens =
-            u32::try_from(ok.get("output_tokens").and_then(Value::as_u64).unwrap_or(0))
-                .unwrap_or(u32::MAX);
-        Ok(LlmResponse {
-            text,
-            input_tokens,
-            output_tokens,
-        })
+        let resp: LlmResponse = serde_json::from_value(ok.clone())
+            .unwrap_or_else(|e| panic!("Playback<LlmClient>: malformed ok payload: {e}"));
+        Ok(resp)
     } else if out.get("err_not_configured").is_some() {
         Err(LlmError::NotConfigured)
     } else if let Some(err) = out.get("err_budget_exceeded") {

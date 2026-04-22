@@ -55,5 +55,7 @@ pub mod rng;
 pub use clock::{Clock, UnixMillis};
 pub use filesystem::{FileSystem, FsError};
 pub use game_event_sink::{GameEventSink, GameEventSinkError};
-pub use llm_client::{LlmClient, LlmError, LlmRequest, LlmResponse};
+pub use llm_client::{
+    ChatMessage, ChatRole, LlmClient, LlmError, LlmRequest, LlmResponse, SystemBlock,
+};
 pub use rng::{Rng, RngError};
