@@ -149,13 +149,38 @@ Sources: `crates/games/{cribbage,shipwreck}/tests/heuristic_beats_random.rs`.
 
 ## R2.3 — ISMCTSAgent beats HeuristicAgent (SO-ISMCTS)
 
-| Game | Games | Iterations | Measured | Bar | Wall time (4-core reference) |
-|---|---|---|---|---|---|
-| Cribbage | 10,000 | 1,000 | **75.38%** | ≥ 65% | 21.9 min |
+| Game | Games | Iterations | Measured | Bar | Status | Wall time (4-core reference) |
+|---|---|---|---|---|---|---|
+| Cribbage | 10,000 | 1,000 | **75.38%** | ≥ 65% | **Pass** | 21.9 min |
+| ShipWreck | 1,000 | 1,000 | **52.10%** | ≥ 65% | **Fail** | 38.6 min |
 
 **Cribbage** cleared R2.3 with a 10.4 pp margin (7,538 wins, 2,462 losses, 0 draws).
 
-**ShipWreck** — the full 10K × iter=1000 soak is single-machine-impractical on the 4-core reference (estimated 7+ hours). A practical-budget variant (`ismcts_beats_heuristic_1k_iter1000`, 1,000 games × iter=1000) is provided — it produces a trustworthy rate (stdev ~1.6 pp) in ~45 min and is what a workstation can realistically verify. The full 10K test remains the formal spec; a dedicated benchmark machine or a multi-shard scheduled-CI run can produce the 10K rate if needed.
+**ShipWreck** did **not** clear R2.3 at the current budget and parameter
+set — ISMCTS barely beats heuristic-shipwreck (521/1000, stdev ~1.6 pp,
+comfortably short of 65%). The gap is real, not sampling noise. Likely
+contributors:
+
+- **Rollout depth.** `rollout_depth = 50` was inherited from the cribbage
+  default, but ShipWreck games run ~150 plies. Most rollouts hit the
+  depth cap and fall back to `shipwreck_eval`, turning ISMCTS into a
+  shallow-search wrapper around the same heuristic it's trying to beat.
+- **Eval richness.** `shipwreck_eval` is a coarse resource-plus-raft
+  heuristic. In Cribbage, `cribbage_eval` exposes combination scoring
+  that's hard to beat with short-horizon planning; in ShipWreck, the eval
+  and the heuristic are closer in what they capture, so ISMCTS has less
+  room to add value.
+- **Event-card randomness.** Shark/Typhoon/FlyingFish inject high-variance
+  swings that short rollout samples approximate poorly. A bigger
+  iteration budget or a variance-reduced rollout policy may help.
+
+Next steps (not in scope for this plan, captured in plan 002's
+post-ship findings): lift `rollout_depth` toward the game's actual length,
+sweep exploration_c in {0.7, 1.0, 1.4, 2.0}, and widen `shipwreck_eval`
+to capture equipment-build progress rather than inventory alone. The
+full 10K × iter=1000 soak test (`ismcts_beats_heuristic_10k` in
+`crates/games/shipwreck/tests/ismcts_beats_heuristic.rs`) remains the
+formal spec and stays `#[ignore]`'d for benchmark-machine / sharded-CI.
 
 Both games run `ISMCTSAgent::with_eval` at the registry default (`iterations = 1000, exploration_c = sqrt(2), rollout_depth = 50 (shipwreck) / 80 (cribbage)`). SO-ISMCTS determinizes the opponent's hidden information once per iteration via `Game::determinize`, descends with UCB1, rolls out with random action choice plus eval fallback at the depth cutoff, and backpropagates a sigmoid-normalized reward from the observer's perspective.
 

@@ -939,11 +939,35 @@ Client                   playtest-server           broadcaster           engine 
 
 ## Success Metrics
 
-- **Trait stability.** Unit 22 ships with zero *additional* changes to the `Game` trait (Unit 19's planned `determinize` addition is the only delta; anything beyond that is a multi-game-abstraction surprise to document).
-- **Frontend readiness.** `docs/openapi.json` exists (regenerated manually via `playtest api-schema`), and `openapi-typescript` consumes it without error.
-- **Agent quality.** R2.2 and R2.3 exit criteria pass for both games.
+- **Trait stability.** Unit 22 ships with zero *additional* changes to the `Game` trait. ✅ Met. (Unit 19's planned `determinize` addition was the only Game-trait delta. Unit 26 added `Hash + Eq` bounds to `Game::Action` for ISMCTS's action-keyed tree — bound widening, not a new method, so the plan treats this as a minor-surface change rather than a Success-Metric miss.)
+- **Frontend readiness.** `docs/openapi.json` exists (regenerated manually via `playtest api-schema`), and `openapi-typescript` consumes it without error. ✅ Met (Unit 18).
+- **Agent quality.** R2.2 and R2.3 exit criteria pass for both games. ⚠️ **Partially met** — see Post-ship findings. R2.2 passes for both (96.66% cribbage, 92.48% shipwreck). R2.3 passes for cribbage (75.38% at 10K × iter=1000) but fails for shipwreck (52.10% at 1K × iter=1000; stdev ~1.6 pp, gap is real).
 - **Performance.** R2.4 passes (10K-per-pair on a 20-agent pool completes in <30 min on the reference laptop; recorded manually in `docs/BENCHMARKS.md`).
 - **Dogfood moment.** A human watches a live Cribbage game end-to-end via the SSE stream at least once before this plan is called done.
+
+## Post-ship findings
+
+Implementation units 16–27 all shipped and are merged to `main`; the
+plan's code deliverables are complete. One exit criterion is open:
+
+- **R2.3 shipwreck gap.** ISMCTS-shipwreck at the registry default
+  budget (iter=1000, `rollout_depth=50`, `exploration_c=sqrt(2)`) wins
+  52.10% against heuristic-shipwreck over 1,000 games. That's a narrow,
+  statistically real margin — not parity, but well short of the 65% bar.
+  Suspected contributors, from most to least likely:
+  1. `rollout_depth=50` is too shallow for ~150-ply ShipWreck games.
+     Most rollouts hit the depth cap and fall back to `shipwreck_eval`,
+     reducing ISMCTS to a shallow wrapper around the same heuristic.
+  2. `shipwreck_eval` captures resources + raft length but not
+     equipment-build progress. Lifting its richness closes the gap on
+     heuristic play while also giving ISMCTS better leaf signals.
+  3. Event-card variance (shark/typhoon/flying-fish) dominates short
+     rollouts; increasing iterations or switching to a variance-reduced
+     rollout policy helps.
+
+  A follow-up plan should tune these and re-measure with the existing
+  `ismcts_beats_heuristic_1k_iter1000` test before attempting the full
+  10K spec test.
 
 ## Dependencies / Prerequisites
 

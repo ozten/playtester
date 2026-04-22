@@ -137,18 +137,46 @@ Example response:
 {
   "api_version": "1.0.0",
   "data": [
-    {
-      "id": "random",
-      "display_name": "random",
-      "supported_games": []
-    }
+    { "id": "random",              "display_name": "random",              "supported_games": [] },
+    { "id": "greedy-cribbage",     "display_name": "greedy-cribbage",     "supported_games": [] },
+    { "id": "heuristic-cribbage",  "display_name": "heuristic-cribbage",  "supported_games": [] },
+    { "id": "ismcts-cribbage",     "display_name": "ismcts-cribbage",     "supported_games": [] }
   ],
   "errors": []
 }
 ```
 
-`supported_games` empty means the agent is game-agnostic. A
-non-empty array is the whitelist of game ids the agent works with.
+**Agent catalog (Cribbage-relevant):**
+
+| `id`                 | What it does                                                                 |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `random`             | Uniform-random legal move. Game-agnostic; baseline for soak tests.          |
+| `greedy-cribbage`    | One-ply lookahead against the Cribbage eval function.                        |
+| `heuristic-cribbage` | Softmax over per-action eval scores (temperature-weighted).                  |
+| `ismcts-cribbage`    | Information-Set Monte-Carlo Tree Search. Accepts a parameter suffix — see below. |
+
+**`ismcts-*` parameter suffix.** ISMCTS agents accept optional tuning
+via a `:`-delimited suffix on the agent id. The base id is what
+`/api/agents-registry` returns; the parameterized form is what a
+client may pass in `POST /api/runs`'s `agents` array.
+
+Shape: `"<base>:key1=value1,key2=value2"`.
+
+Accepted keys: `iter` (iteration budget, u32), `c` (exploration
+constant, f64), `rollout` (rollout depth, usize), `seed` (u64).
+Any key may be omitted to keep its default.
+
+Examples:
+- `"ismcts-cribbage"` — default budget (1000 iterations, `c = √2`).
+- `"ismcts-cribbage:iter=2000,c=1.4"` — stronger play, custom exploration.
+
+**Caveat about `supported_games`.** Today the server returns an empty
+array for every agent — including agents whose id suffix (e.g.
+`-cribbage`) implies they are game-specific. Treat the field as
+unreliable for filtering. Instead, select Cribbage-compatible agents
+by name: `random` (game-agnostic) and any id ending in `-cribbage`.
+Sending a per-game agent against the wrong game is rejected by the
+server with `InvalidConfig`.
 
 ### `POST /api/runs`
 
@@ -358,6 +386,137 @@ The run-level `/api/runs/{run_id}/stream` does not currently
 replay past `game_started`/`game_finished` frames if a client
 reconnects mid-run; plan for a full page reload + re-subscribe if
 the run-level socket drops.
+
+## Game event payloads
+
+The `events` endpoint and the per-game SSE stream both carry
+JSONL log records. The envelope fields (`kind`, `tick`, `payload`)
+are typed in the OpenAPI dump; the **inside** of `payload` is
+game-defined and opaque to the wire contract. Each game crate
+documents its own event taxonomy here.
+
+### Envelope recap
+
+Every record is one of three `kind`s:
+
+```json
+// header — first record per game. Fixed shape across all games.
+{
+  "kind": "header",
+  "schema": 2,
+  "game": "cribbage",
+  "version": "0.0.0",
+  "seed": 7,
+  "agents": ["random", "random"],
+  "started_at": 1713657600050,
+  "config_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+}
+
+// event — one per engine tick. `tick` is zero-based, monotonic,
+// and equals the SSE `id:` on the per-game stream.
+{ "kind": "event", "tick": 0, "payload": { /* game-specific */ } }
+
+// final — last record per game. `scores` is game-defined but always
+// one entry per seat in the same order as header.agents.
+{ "kind": "final", "winner": 1, "reason": "Victory", "scores": [118, 125], "finished_at": 1713657600400 }
+```
+
+**Seat-index convention.** Players are `u8` seat indices starting at
+`0`, matching the order of `agents` in the create-run request (and
+`header.agents` in the log). `winner` in the `final` record is a
+seat index, or `null` on a draw. `scores[i]` is seat `i`'s final
+score.
+
+**`reason` values.** The `EndReason` taxonomy is shared across games:
+
+| JSON                        | Meaning                                       |
+| --------------------------- | --------------------------------------------- |
+| `"Victory"`                 | A player reached the normal win condition.    |
+| `"Draw"`                    | All players conceded or no legal continuation.|
+| `"Stalemate"`               | Game ended because a player could not act.    |
+| `{"Other": "<string>"}`     | Game-specific reason. Do not pattern-match on contents. |
+
+### Cribbage event payloads
+
+`payload.kind` is `snake_case`. Every variant below is what the
+server puts on the wire for a Cribbage game; parse `payload`
+against this taxonomy to recover typed Cribbage state.
+
+| `payload.kind`       | Fires when                                                     |
+| -------------------- | -------------------------------------------------------------- |
+| `deal_card`          | One card dealt. Twelve per hand: alternating non-dealer/dealer. |
+| `discard_to_crib`    | Player commits two cards to the crib. Twice per hand.          |
+| `cut_starter`        | Starter card is cut from the remaining deck after discards.    |
+| `nibs_scored`        | Starter was a Jack — dealer scores 2 ("his heels").           |
+| `peg_played`         | Player played a card during pegging. `running_total` is the new stack sum. |
+| `peg_scored`         | Pegging scored — 15, 31, pair/triple/quad, run, or last-card.  |
+| `go`                 | Player said "Go" (has cards but no legal play).                |
+| `pegging_round_end`  | Pegging stack reset (31 reached, or both players said Go).     |
+| `pegging_complete`   | All eight cards played; pegging phase over.                    |
+| `show_scored`        | One of three show steps: non-dealer hand, dealer hand, crib.   |
+| `hand_complete`      | Hand ended without a winner; dealer rotates for next hand.     |
+| `end_game`           | A player crossed 121. No further events follow.                |
+
+**Worked examples** (captured from `playtest play --game cribbage
+--agents random,random --seed 7`):
+
+```json
+{"kind":"deal_card","player":1,"card":{"rank":"Ace","suit":"Diamonds"}}
+{"kind":"discard_to_crib","player":1,"cards":[{"rank":"Two","suit":"Hearts"},{"rank":"Eight","suit":"Clubs"}]}
+{"kind":"cut_starter","card":{"rank":"Four","suit":"Clubs"}}
+{"kind":"nibs_scored","player":1,"points":2}
+{"kind":"peg_played","player":1,"card":{"rank":"Ace","suit":"Diamonds"},"running_total":1}
+{"kind":"peg_scored","player":0,"reason":"ThirtyOne","points":2}
+{"kind":"go","player":0}
+{"kind":"pegging_round_end"}
+{"kind":"pegging_complete"}
+{"kind":"show_scored","player":1,"is_crib":false,"score":{"fifteens":4,"pairs":0,"runs":0,"flush":0,"nobs":0,"total":4}}
+{"kind":"hand_complete","next_dealer":1}
+{"kind":"end_game","winner":1,"reason":"Victory"}
+```
+
+**Sub-shapes:**
+
+```jsonc
+// Card — unchanged everywhere Cribbage uses cards.
+{ "rank": "Ace", "suit": "Diamonds" }
+
+// Rank: one of
+//   "Ace" "Two" "Three" "Four" "Five" "Six" "Seven" "Eight" "Nine" "Ten" "Jack" "Queen" "King"
+// Suit: one of
+//   "Clubs" "Diamonds" "Hearts" "Spades"
+
+// PegReason on peg_scored — one of:
+//   "Fifteen"       // +2; running total landed on 15
+//   "ThirtyOne"     // +2; running total landed on 31; round ends
+//   "Pair"          // +2; last two cards same rank
+//   "Triple"        // +6
+//   "Quadruple"     // +12
+//   { "Run": 3 }    // +N; last N cards form a run of N (tagged object)
+//   "LastCard"      // +1; round ended under 31
+// Points are already computed in `points` — you do not need to
+// recompute them from the reason.
+
+// ShowScore on show_scored — breakdown of a 4-card hand (or crib)
+// scored against the starter. `total` is the sum of the other fields.
+{ "fifteens": 4, "pairs": 0, "runs": 0, "flush": 0, "nobs": 0, "total": 4 }
+```
+
+**Notes for UI work.**
+- `scores` on the `final` record can exceed 121 — e.g. `[118, 125]`
+  — if the winning counting unit overshoots. Clamp to 121 for
+  display if the rulebook wording matters to users.
+- `discard_to_crib` carries both hidden cards for both players. A
+  spectator UI that wants to reveal crib cards only at show time
+  must suppress these payloads client-side until
+  `show_scored{is_crib: true}` fires.
+- `deal_card` is fully public in the log — a "fog of war" view for
+  the opposing seat must also filter these client-side.
+- `tick` on the `event` frame is both the JSONL event index and the
+  SSE `id:` for reconnection. Paginated reads via
+  `/events?offset=N&limit=M` are in line-count order, not
+  tick order: offset 0 is the header, offset 1 is tick 0, offset
+  `total - 1` is the `final` record.
 
 ## Error codes
 
