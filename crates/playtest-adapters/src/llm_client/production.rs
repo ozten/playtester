@@ -139,7 +139,7 @@ pub struct ProductionLlmClient {
     remaining_budget: AtomicU64,
     /// Override for the Anthropic endpoint. `None` → the real
     /// `https://api.anthropic.com/v1/messages`. Used by integration
-    /// tests that point the adapter at a local wiremock server;
+    /// tests that point the adapter at a local pact mock server;
     /// production callers leave it `None`.
     anthropic_endpoint_override: Option<String>,
 }

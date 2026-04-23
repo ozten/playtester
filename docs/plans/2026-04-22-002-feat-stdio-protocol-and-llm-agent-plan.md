@@ -324,7 +324,7 @@ Dependency shape: Unit 1 + Unit 2 are independent preconditions; Units 3–5 bui
 **Files:**
 - Rewrite: `crates/playtest-adapters/src/llm_client/production.rs`
 - Modify: `crates/playtest-adapters/Cargo.toml` — add `reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }`, reusing the workspace-resolved version and matching the server's TLS backend. (`reqwest` is already resolved in `Cargo.lock` at 0.12.x via the server's dep — no duplicate-version risk.)
-- Test: `crates/playtest-adapters/tests/llm_production_anthropic.rs` (new — uses a wiremock-style mock HTTP server)
+- Test: `crates/playtest-adapters/tests/llm_production_anthropic.rs` (new — uses a `pact_consumer` mock HTTP server)
 - Test: `crates/playtest-adapters/tests/llm_production_openai_compat.rs` (new)
 
 **Approach:**
@@ -662,7 +662,7 @@ Five of the tests are the Unit 8 cross-cutting checks:
 - **R3.1, R3.2** — `stdio` and `llm` agent kinds accepted by both game
   factories. Covered by registry tests + the two e2e tests above.
 - **R3.3, R3.4, R3.5** — `LlmClient` port shape + production adapter
-  + budget enforcement. Covered by Unit 3's wiremock tests.
+  + budget enforcement. Covered by Unit 3's `pact_consumer` tests.
 - **R3.6** — main log is replay-from-seed deterministic; LLM not
   consulted during replay. Covered by `llm_replay_deterministic.rs`.
 - **R3.7** — Python reference client + `docs/stdio-protocol.md`
