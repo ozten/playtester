@@ -12,11 +12,14 @@ use core::marker::PhantomData;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use playtest_core::{Agent, AgentError, Game, PlayerId};
+use playtest_core::{Agent, AgentError, Game, GameResult, PlayerId};
 use playtest_ports::{ChatMessage, ChatRole, LlmClient, LlmError, LlmRequest};
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
+use super::critique::agent::critique_once;
+use super::critique::sidecar::CritiqueSidecar;
+use super::critique::spec::QuestionnaireSpec;
 use super::prompt::{build_system_blocks, build_user_message};
 use super::scratch::ScratchBuffer;
 use super::sidecar::{LlmCallRecord, LlmSidecar};
@@ -90,6 +93,50 @@ where
     #[must_use]
     pub fn scratch(&self) -> &ScratchBuffer {
         &self.scratch
+    }
+
+    /// Issue one post-game critique call and append the resulting
+    /// `questionnaire_response` record to `sidecar`. Reuses the
+    /// configured `LlmClient`, so the cached rules+catalog prefix
+    /// from gameplay stays warm for the extra call.
+    ///
+    /// `persona_addendum` is the Phase 4 seam — always `None` in
+    /// Phase 5 callers.
+    ///
+    /// Scratch is **not** mutated: critique runs in its own context
+    /// and must not corrupt replay-visible state.
+    ///
+    /// # Errors
+    /// Propagates [`AgentError`] from `critique_once`. Sidecar
+    /// append failures are logged to stderr and do not surface
+    /// (parallels the gameplay sidecar discipline — losing a
+    /// critique record is a degraded observation, not a game bug).
+    pub async fn post_game_critique(
+        &self,
+        view: &G::PublicView,
+        result: &GameResult,
+        spec: &QuestionnaireSpec,
+        sidecar: &CritiqueSidecar,
+        persona_addendum: Option<&str>,
+    ) -> Result<(), AgentError>
+    where
+        G::PublicView: Serialize,
+    {
+        let record = critique_once(
+            &self.cfg,
+            self.seat,
+            view,
+            result,
+            &self.scratch,
+            spec,
+            persona_addendum,
+        )
+        .await?;
+
+        if let Err(e) = sidecar.append_questionnaire(&record).await {
+            eprintln!("LlmAgent critique sidecar write failed: {e}");
+        }
+        Ok(())
     }
 }
 

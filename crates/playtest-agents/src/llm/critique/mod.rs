@@ -11,10 +11,12 @@
 //! - `<gid>.llm.jsonl` — cost-observability sidecar (Phase 3).
 //! - `<gid>.critique.jsonl` — subjective-critique sidecar (Phase 5, this module).
 
+pub mod agent;
 pub mod prompt;
 pub mod sidecar;
 pub mod spec;
 
+pub use agent::critique_once;
 pub use prompt::{build_critique_instructions, build_critique_system_blocks, build_critique_user_message};
 pub use sidecar::{
     CodedTag, CodedTagRecord, CritiqueSidecar, CritiqueSidecarHeader,
