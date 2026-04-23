@@ -67,3 +67,35 @@ CREATE TABLE IF NOT EXISTS game_metrics (
 
 CREATE INDEX IF NOT EXISTS idx_game_metrics_name ON game_metrics(metric_name);
 CREATE INDEX IF NOT EXISTS idx_game_metrics_name_tag ON game_metrics(metric_name, tag);
+
+-- Phase 5 critique tables. Populated from `<gid>.critique.jsonl` sidecars
+-- during ingest; dormant (empty) for games that didn't run with
+-- `--critique`. Both are STRICT + idempotent via `INSERT OR REPLACE`.
+
+CREATE TABLE IF NOT EXISTS critique_likert (
+    game_id      TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    seat         INTEGER NOT NULL,
+    question     TEXT NOT NULL,
+    score        INTEGER NOT NULL CHECK (score BETWEEN 1 AND 5),
+    spec_version INTEGER NOT NULL,
+    PRIMARY KEY (game_id, seat, question)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_critique_likert_question ON critique_likert(question);
+
+-- `ref_card` carries '' instead of NULL as the "no card blamed"
+-- sentinel — same pattern as `tag` in game_metrics: STRICT tables
+-- forbid NULL in a PRIMARY KEY column and NULL != NULL defeats
+-- INSERT OR REPLACE deduplication. Queries that want "no card"
+-- match `ref_card = ''`; the reporter hides the sentinel.
+CREATE TABLE IF NOT EXISTS critique_tags (
+    game_id   TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    seat      INTEGER NOT NULL,
+    tag       TEXT NOT NULL,
+    severity  INTEGER NOT NULL CHECK (severity BETWEEN 1 AND 5),
+    ref_card  TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (game_id, seat, tag, ref_card)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_critique_tags_tag ON critique_tags(tag);
+CREATE INDEX IF NOT EXISTS idx_critique_tags_ref_card ON critique_tags(ref_card);

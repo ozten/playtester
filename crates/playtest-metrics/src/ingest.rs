@@ -70,6 +70,10 @@ pub struct IngestReport {
     pub metrics_written: u64,
     /// Total rows written to `agent_stats`.
     pub agent_rows_written: u64,
+    /// Phase 5: total rows written to `critique_likert`.
+    pub critique_likert_rows: u64,
+    /// Phase 5: total rows written to `critique_tags`.
+    pub critique_tag_rows: u64,
     /// Per-file failures.
     pub errors: Vec<FileError>,
 }
@@ -229,7 +233,180 @@ where
 
     report.games_ingested += 1;
     report.metrics_written += written;
+
+    // Phase 5: look for a sibling `.critique.jsonl` and load both
+    // record kinds into the critique tables. A missing sidecar is
+    // the common case (games run without `--critique`) — silently
+    // skip.
+    let critique_path = critique_sidecar_path(path);
+    if critique_path.is_file() {
+        match ingest_critique_sidecar(tx, game_id, &critique_path) {
+            Ok((likert, tags)) => {
+                report.critique_likert_rows += likert;
+                report.critique_tag_rows += tags;
+            }
+            Err(e) => {
+                report.errors.push(FileError {
+                    path: critique_path,
+                    reason: format!("critique ingest: {e}"),
+                });
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// Map `games/abc.jsonl` → `games/abc.critique.jsonl`.
+fn critique_sidecar_path(main_log: &Path) -> PathBuf {
+    // Strip trailing `.jsonl`, append `.critique.jsonl`.
+    let stem = main_log.to_string_lossy();
+    if let Some(base) = stem.strip_suffix(".jsonl") {
+        return PathBuf::from(format!("{base}.critique.jsonl"));
+    }
+    main_log.with_extension("critique.jsonl")
+}
+
+/// Load all `questionnaire_response` and `coded_tag` records from a
+/// critique sidecar into the two critique tables. Overwrites existing
+/// rows for `game_id` to keep re-ingest idempotent.
+#[allow(clippy::too_many_lines)]
+fn ingest_critique_sidecar(
+    tx: &Transaction<'_>,
+    game_id: Uuid,
+    path: &Path,
+) -> Result<(u64, u64), IngestError> {
+    // Idempotency: wipe prior critique rows for this game before
+    // reloading. Re-ingest after `--overwrite` produces the same
+    // post-state as a fresh ingest.
+    tx.execute(
+        "DELETE FROM critique_likert WHERE game_id = ?1",
+        params![game_id.to_string()],
+    )?;
+    tx.execute(
+        "DELETE FROM critique_tags WHERE game_id = ?1",
+        params![game_id.to_string()],
+    )?;
+
+    let text = std::fs::read_to_string(path).map_err(|e| IngestError::ReadDir {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+
+    let mut likert_rows = 0_u64;
+    let mut tag_rows = 0_u64;
+
+    let mut likert_stmt = tx.prepare(
+        "INSERT OR REPLACE INTO critique_likert \
+         (game_id, seat, question, score, spec_version) VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    let mut tag_stmt = tx.prepare(
+        "INSERT OR REPLACE INTO critique_tags \
+         (game_id, seat, tag, severity, ref_card) VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+
+    // Build an in-memory coded_tag table keyed by seat so that when
+    // the same sidecar carries multiple `coded_tag` records for the
+    // same seat (e.g. after `critique-code --overwrite`), the last
+    // one wins. Ordering: JSONL is append-only, so the last line
+    // for a given seat is the latest coding.
+    let mut last_coded: std::collections::BTreeMap<u8, serde_json::Value> =
+        std::collections::BTreeMap::new();
+
+    for (line_no, line) in text.lines().enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "critique ingest: {}: line {line_no}: ignoring malformed JSON: {e}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        match value.get("kind").and_then(|v| v.as_str()) {
+            Some("questionnaire_response") => {
+                let Some(seat) = seat_from_value(&value) else {
+                    continue;
+                };
+                let spec_version = value
+                    .get("spec_version")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|v| u16::try_from(v).ok())
+                    .unwrap_or(0);
+                if let Some(likert) = value.get("likert").and_then(|v| v.as_object()) {
+                    for (question, score_val) in likert {
+                        let Some(score) = score_val.as_u64().and_then(|s| u8::try_from(s).ok())
+                        else {
+                            continue;
+                        };
+                        if !(1..=5).contains(&score) {
+                            continue;
+                        }
+                        likert_stmt.execute(params![
+                            game_id.to_string(),
+                            i64::from(seat),
+                            question,
+                            i64::from(score),
+                            i64::from(spec_version),
+                        ])?;
+                        likert_rows += 1;
+                    }
+                }
+            }
+            Some("coded_tag") => {
+                let Some(seat) = seat_from_value(&value) else {
+                    continue;
+                };
+                last_coded.insert(seat, value);
+            }
+            _ => {}
+        }
+    }
+
+    // Apply the last-coded records per seat.
+    for (seat, value) in &last_coded {
+        let Some(tags) = value.get("tags").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for tag_val in tags {
+            let Some(tag) = tag_val.get("tag").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(severity) = tag_val
+                .get("severity")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|s| u8::try_from(s).ok())
+            else {
+                continue;
+            };
+            if !(1..=5).contains(&severity) {
+                continue;
+            }
+            let ref_card = tag_val
+                .get("ref_card")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            tag_stmt.execute(params![
+                game_id.to_string(),
+                i64::from(*seat),
+                tag,
+                i64::from(severity),
+                ref_card,
+            ])?;
+            tag_rows += 1;
+        }
+    }
+
+    Ok((likert_rows, tag_rows))
+}
+
+fn seat_from_value(v: &serde_json::Value) -> Option<u8> {
+    let s = v.get("seat")?.as_u64()?;
+    u8::try_from(s).ok()
 }
 
 fn load_log<G>(path: &Path) -> Result<GameLog<G>, LoadError>
