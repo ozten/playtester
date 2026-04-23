@@ -101,6 +101,8 @@ fn llm_stubbed_full_cribbage_game_produces_valid_main_log_and_sidecar() {
         sidecar: Some(sidecar.clone()),
         model: "claude-stub".into(),
         max_tokens: Some(256),
+    critique_sidecar: None,
+    critique_spec: None,
     };
     let extras = RunExtras::new().with_llm_deps(&llm_deps);
     let agent_names = vec!["llm".to_owned(), "llm".to_owned()];
@@ -190,6 +192,8 @@ fn llm_prompt_cache_discipline_rules_bytes_identical_across_turns() {
         sidecar: Some(Arc::new(sidecar)),
         model: "claude-stub".into(),
         max_tokens: Some(256),
+    critique_sidecar: None,
+    critique_spec: None,
     };
     let extras = RunExtras::new().with_llm_deps(&llm_deps);
     let agent_names = vec!["llm".to_owned(), "random".to_owned()];

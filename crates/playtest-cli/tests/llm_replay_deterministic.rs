@@ -50,6 +50,8 @@ fn llm_recorded_game_replays_from_seed_without_llm_contact() {
         sidecar: None,
         model: "claude-stub".into(),
         max_tokens: Some(256),
+    critique_sidecar: None,
+    critique_spec: None,
     };
     let extras = RunExtras::new().with_llm_deps(&llm_deps);
     let agent_names = vec!["llm".to_owned(), "random".to_owned()];

@@ -11,7 +11,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use playtest_adapters::{ProductionClock, ProductionRng};
-use playtest_agents::{LlmSidecar, RemoteAgentTransport, StdioAgentConfig};
+use playtest_agents::{
+    CritiqueSidecar, LlmSidecar, PostGameCritic, QuestionnaireSpec, RemoteAgentTransport,
+    StdioAgentConfig,
+};
 use playtest_core::{Agent, Game, GameLoop};
 use playtest_cribbage::{CribbageConfig, CribbageGame, Event as CribbageEvent};
 use playtest_log::{EventLogWriter, LogHeader, LogRecord, SCHEMA_VERSION, compute_config_hash};
@@ -19,7 +22,7 @@ use playtest_ports::{Clock, GameEventSink, LlmClient};
 use playtest_shipwreck::{Event as ShipWreckEvent, ShipWreckConfig, ShipWreckGame};
 
 use crate::agent_registry::{
-    AgentBuildCtx, build_cribbage_agent, build_shipwreck_agent,
+    AgentBuildCtx, BuiltAgent, build_cribbage_agent_with_critic, build_shipwreck_agent_with_critic,
     validate_llm_provider_consistency,
 };
 use crate::game_registry::RegisteredGame;
@@ -29,6 +32,11 @@ use crate::game_registry::RegisteredGame;
 /// server passes `Some(&vec)` where `vec[i] == Some(transport)` exactly
 /// for seats whose agent name is `"http-remote"`.
 pub type RemoteTransports = [Option<Arc<dyn RemoteAgentTransport>>];
+
+/// Parallel critic vec produced by splitting a `Vec<BuiltAgent<G>>`.
+/// One slot per seat; `Some` only for `llm` seats.
+type CritiqueSlots<G> = Vec<Option<Box<dyn PostGameCritic<G>>>>;
+type AgentSlots<G> = Vec<Box<dyn Agent<G>>>;
 
 /// LLM-related dependencies for a single game.
 ///
@@ -41,6 +49,14 @@ pub struct LlmCliDeps {
     pub sidecar: Option<Arc<LlmSidecar>>,
     pub model: String,
     pub max_tokens: Option<u32>,
+    /// Phase 5: when set, every `llm` seat's agent will emit one
+    /// `questionnaire_response` record into this sidecar after
+    /// `GameLoop::run` returns. Non-`llm` seats are untouched.
+    pub critique_sidecar: Option<Arc<CritiqueSidecar>>,
+    /// Phase 5: questionnaire schema the critique pass uses. Required
+    /// when `critique_sidecar` is `Some`. Shared `Arc<_>` so multiple
+    /// games in one batch use byte-identical spec (stable `sha256()`).
+    pub critique_spec: Option<Arc<QuestionnaireSpec>>,
 }
 
 impl core::fmt::Debug for LlmCliDeps {
@@ -49,6 +65,8 @@ impl core::fmt::Debug for LlmCliDeps {
             .field("model", &self.model)
             .field("max_tokens", &self.max_tokens)
             .field("sidecar", &self.sidecar.is_some())
+            .field("critique_sidecar", &self.critique_sidecar.is_some())
+            .field("critique_spec", &self.critique_spec.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -200,14 +218,17 @@ fn run_cribbage_into_sink(
 ) -> Result<()> {
     let cfg = CribbageConfig;
 
-    let mut agents: Vec<Box<dyn Agent<CribbageGame>>> = agent_names
+    let built: Vec<BuiltAgent<CribbageGame>> = agent_names
         .iter()
         .enumerate()
         .map(|(i, name)| {
             let ctx = build_ctx_for_seat(i, seed, extras);
-            build_cribbage_agent(name, &ctx)
+            build_cribbage_agent_with_critic(name, &ctx)
         })
         .collect::<Result<Vec<_>>>()?;
+
+    let (mut agents, critics): (AgentSlots<CribbageGame>, CritiqueSlots<CribbageGame>) =
+        built.into_iter().map(|b| (b.agent, b.critic)).unzip();
 
     let started_at = if let Some(t) = fixed_time {
         t
@@ -233,12 +254,32 @@ fn run_cribbage_into_sink(
     let mut loop_ = GameLoop::new(&game, game.initial_state(seed, &cfg));
     let mut chance_rng = ProductionRng::from_seed(seed);
 
-    let result = {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(loop_.run(agents.as_mut_slice(), &mut chance_rng, sink))?
-    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    let result = rt.block_on(loop_.run(agents.as_mut_slice(), &mut chance_rng, sink))?;
+
+    // Phase 5: post-game critique. Runs after the engine has finished
+    // emitting its events into `sink`; critique records never reach the
+    // main log. Failures log to stderr and do not fail the run.
+    if let Some(deps) = extras.llm_deps
+        && let (Some(spec), Some(sidecar)) =
+            (deps.critique_spec.as_ref(), deps.critique_sidecar.as_ref())
+    {
+        let final_state = loop_.state();
+        for (seat, critic_opt) in critics.iter().enumerate() {
+            if let Some(critic) = critic_opt {
+                let seat_id = u8::try_from(seat).expect("seat fits in u8");
+                let view = game.public_view(final_state, seat_id);
+                if let Err(e) = rt.block_on(critic.post_game_critique(
+                    &view, &result, spec, sidecar, None,
+                )) {
+                    eprintln!("post-game critique failed for seat {seat}: {e}");
+                }
+            }
+        }
+    }
 
     // Capture finish time the same way started_at was captured: honor
     // `fixed_time` when set so deterministic runs produce identical
@@ -275,14 +316,17 @@ fn run_shipwreck_into_sink(
     let cfg = ShipWreckConfig::new(n)
         .expect("agent count validated against registry player range before dispatch");
 
-    let mut agents: Vec<Box<dyn Agent<ShipWreckGame>>> = agent_names
+    let built: Vec<BuiltAgent<ShipWreckGame>> = agent_names
         .iter()
         .enumerate()
         .map(|(i, name)| {
             let ctx = build_ctx_for_seat(i, seed, extras);
-            build_shipwreck_agent(name, &ctx)
+            build_shipwreck_agent_with_critic(name, &ctx)
         })
         .collect::<Result<Vec<_>>>()?;
+
+    let (mut agents, critics): (AgentSlots<ShipWreckGame>, CritiqueSlots<ShipWreckGame>) =
+        built.into_iter().map(|b| (b.agent, b.critic)).unzip();
 
     let started_at = if let Some(t) = fixed_time {
         t
@@ -308,12 +352,31 @@ fn run_shipwreck_into_sink(
     let mut loop_ = GameLoop::new(&game, game.initial_state(seed, &cfg));
     let mut chance_rng = ProductionRng::from_seed(seed);
 
-    let result = {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(loop_.run(agents.as_mut_slice(), &mut chance_rng, sink))?
-    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    let result = rt.block_on(loop_.run(agents.as_mut_slice(), &mut chance_rng, sink))?;
+
+    // Phase 5: post-game critique (see the identical block in
+    // `run_cribbage_into_sink` for invariants).
+    if let Some(deps) = extras.llm_deps
+        && let (Some(spec), Some(sidecar)) =
+            (deps.critique_spec.as_ref(), deps.critique_sidecar.as_ref())
+    {
+        let final_state = loop_.state();
+        for (seat, critic_opt) in critics.iter().enumerate() {
+            if let Some(critic) = critic_opt {
+                let seat_id = u8::try_from(seat).expect("seat fits in u8");
+                let view = game.public_view(final_state, seat_id);
+                if let Err(e) = rt.block_on(critic.post_game_critique(
+                    &view, &result, spec, sidecar, None,
+                )) {
+                    eprintln!("post-game critique failed for seat {seat}: {e}");
+                }
+            }
+        }
+    }
 
     let finished_at = if let Some(t) = fixed_time {
         t

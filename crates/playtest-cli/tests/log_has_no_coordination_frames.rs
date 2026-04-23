@@ -191,6 +191,8 @@ fn llm_game_main_log_has_no_sidecar_records_or_envelopes() {
         sidecar: Some(Arc::new(sidecar)),
         model: "claude-stub".into(),
         max_tokens: Some(256),
+    critique_sidecar: None,
+    critique_spec: None,
     };
     let extras = RunExtras::new().with_llm_deps(&llm_deps);
     let agent_names = vec!["llm".to_owned(), "llm".to_owned()];

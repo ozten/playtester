@@ -25,7 +25,10 @@ use playtest_adapters::{
     ProductionFileSystem, ProductionGameEventSink, ProductionLlmClient, ProductionLlmConfig,
     ProviderKind, SecretString,
 };
-use playtest_agents::{LlmSidecar, SidecarHeader, StdioAgentConfig, sha256_hex};
+use playtest_agents::{
+    CritiqueSidecar, CritiqueSidecarHeader, LlmSidecar, QuestionnaireSpec, SidecarHeader,
+    StdioAgentConfig, default_questionnaire_v1, sha256_hex,
+};
 use playtest_ports::{FileSystem, LlmClient};
 use playtest_registry::agent_registry::split_agent_spec;
 use playtest_registry::game_registry::{
@@ -122,6 +125,16 @@ pub struct PlayArgs {
     /// are forwarded in the order given.
     #[arg(long = "stdio-arg")]
     pub stdio_args: Vec<String>,
+
+    // --- Phase 5 post-game critique flag ---
+    /// When set alongside one or more `llm` seats, every LLM seat
+    /// answers a standardized questionnaire after the game ends. The
+    /// results go to `<out>/game-<idx>.critique.jsonl`. Non-LLM seats
+    /// are untouched.
+    ///
+    /// Disabled by default because critique costs extra tokens.
+    #[arg(long, default_value_t = false)]
+    pub critique: bool,
 }
 
 /// Run the `play` command.
@@ -179,11 +192,28 @@ pub fn run(args: &PlayArgs) -> Result<()> {
 
     std::fs::create_dir_all(&args.out)?;
 
+    // Phase 5: critique opts in via `--critique` AND requires at least
+    // one `llm` seat (non-LLM seats have nothing to say). The shared
+    // spec is built once per run so every game's sidecar header carries
+    // a byte-identical `questionnaire_spec_sha256`.
+    let critique_spec = if args.critique && has_llm_seat {
+        Some(Arc::new(default_questionnaire_v1()))
+    } else {
+        None
+    };
+    if args.critique && !has_llm_seat {
+        bail!(
+            "--critique has no effect when no `llm` seat is present; add at least one llm \
+             seat or remove --critique"
+        );
+    }
+
     let indices: Vec<u32> = (0..args.games).collect();
     let run_one = |idx: u32| -> Result<()> {
         let per_game_seed = args.seed.wrapping_add(u64::from(idx));
         let out_path = args.out.join(format!("game-{idx:04}.jsonl"));
         let sidecar_path = args.out.join(format!("game-{idx:04}.llm.jsonl"));
+        let critique_path = args.out.join(format!("game-{idx:04}.critique.jsonl"));
         run_single_game(
             &game,
             &agent_names,
@@ -195,6 +225,12 @@ pub fn run(args: &PlayArgs) -> Result<()> {
             args.llm_max_tokens,
             stdio_cfg.as_ref(),
             if has_llm_seat { Some(&sidecar_path) } else { None },
+            critique_spec.as_ref(),
+            if critique_spec.is_some() {
+                Some(&critique_path)
+            } else {
+                None
+            },
         )
     };
 
@@ -275,6 +311,8 @@ fn run_single_game(
     llm_max_tokens: Option<u32>,
     stdio_cfg: Option<&StdioAgentConfig>,
     sidecar_path: Option<&Path>,
+    critique_spec: Option<&Arc<QuestionnaireSpec>>,
+    critique_path: Option<&Path>,
 ) -> Result<()> {
     // If any seat is `llm`, open the sidecar and seal a header line
     // carrying the rules hash so cache-stability tooling can cross-ref
@@ -305,11 +343,38 @@ fn run_single_game(
         None
     };
 
+    // Phase 5: if --critique is enabled, open one critique sidecar per
+    // game. Header carries the spec hash so the reporter can detect
+    // cross-version drift.
+    let critique_sidecar = if let (Some(spec), Some(path)) = (critique_spec, critique_path) {
+        let rules_text = rules_text_for_game(game);
+        let header = CritiqueSidecarHeader::new(
+            game_name_for(game),
+            seed,
+            spec.sha256(),
+            sha256_hex(rules_text.as_bytes()),
+        );
+        let fs: Arc<TokioMutex<dyn FileSystem + Send>> =
+            Arc::new(TokioMutex::new(ProductionFileSystem::new()));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("building critique sidecar runtime")?;
+        let cs = rt
+            .block_on(CritiqueSidecar::new(fs, path.to_path_buf(), header))
+            .context("writing critique sidecar header")?;
+        Some(Arc::new(cs))
+    } else {
+        None
+    };
+
     let llm_deps = llm_client.map(|client| LlmCliDeps {
         client: client.clone(),
         sidecar: sidecar.clone(),
         model: llm_model.to_owned(),
         max_tokens: llm_max_tokens,
+        critique_sidecar: critique_sidecar.clone(),
+        critique_spec: critique_spec.cloned(),
     });
 
     let mut extras = RunExtras::new();

@@ -69,6 +69,8 @@ fn recorded_llm_game_replays_to_same_action_sequence_under_playback() {
             sidecar: None,
             model: "claude-stub".into(),
             max_tokens: Some(256),
+            critique_sidecar: None,
+            critique_spec: None,
         };
         let extras = RunExtras::new().with_llm_deps(&llm_deps);
         let fs = ProductionFileSystem::new();
@@ -92,6 +94,8 @@ fn recorded_llm_game_replays_to_same_action_sequence_under_playback() {
             sidecar: None,
             model: "claude-stub".into(),
             max_tokens: Some(256),
+            critique_sidecar: None,
+            critique_spec: None,
         };
         let extras = RunExtras::new().with_llm_deps(&llm_deps);
         let fs = ProductionFileSystem::new();

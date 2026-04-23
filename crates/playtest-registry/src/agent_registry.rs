@@ -25,8 +25,8 @@ use anyhow::{Result, anyhow, bail};
 use playtest_adapters::ProductionRng;
 use playtest_agents::{
     DEFAULT_TEMPERATURE, GreedyAgent, HeuristicAgent, HttpRemoteAgent, ISMCTSAgent, ISMCTSConfig,
-    LlmAgent, LlmAgentConfig, LlmSidecar, RandomAgent, RemoteAgentTransport, StdioAgent,
-    StdioAgentConfig, parse_config_overrides,
+    LlmAgent, LlmAgentConfig, LlmSidecar, PostGameCritic, RandomAgent, RemoteAgentTransport,
+    StdioAgent, StdioAgentConfig, build_shared_handles, parse_config_overrides,
 };
 use playtest_core::{Agent, Game, PlayerId};
 use playtest_cribbage::{CribbageGame, cribbage_eval};
@@ -135,6 +135,48 @@ impl core::fmt::Debug for AgentBuildCtx {
             .field("llm_max_tokens", &self.llm_max_tokens)
             .field("stdio_cfg", &self.stdio_cfg)
             .finish()
+    }
+}
+
+/// Composite result of agent construction: the `Box<dyn Agent<G>>` the
+/// game loop drives, plus an optional `Box<dyn PostGameCritic<G>>` for
+/// the post-game critique pass. `critic` is `Some` exactly for `llm`
+/// seats; every other kind returns `None`.
+///
+/// Both handles point at the same underlying `LlmAgent<G>` instance
+/// via an `Arc<Mutex<_>>` wrapper — scratch mutations from gameplay
+/// are visible to the critic. See
+/// `docs/solutions/architecture-patterns/sharing-mut-self-port-via-arc-mutex-2026-04-23.md`.
+pub struct BuiltAgent<G: Game + ?Sized> {
+    pub agent: Box<dyn Agent<G>>,
+    pub critic: Option<Box<dyn PostGameCritic<G>>>,
+}
+
+impl<G: Game + ?Sized> BuiltAgent<G> {
+    #[must_use]
+    pub fn without_critic(agent: Box<dyn Agent<G>>) -> Self {
+        Self {
+            agent,
+            critic: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_critic(
+        agent: Box<dyn Agent<G>>,
+        critic: Box<dyn PostGameCritic<G>>,
+    ) -> Self {
+        Self {
+            agent,
+            critic: Some(critic),
+        }
+    }
+
+    /// Discard the critic and unwrap the underlying agent. Used by
+    /// call sites that never ran a critique pass (pre-Phase-5 code).
+    #[must_use]
+    pub fn into_agent(self) -> Box<dyn Agent<G>> {
+        self.agent
     }
 }
 
@@ -276,10 +318,15 @@ const DEFAULT_LLM_MAX_TOKENS: u32 = 1024;
 /// Construct an [`LlmAgent<G>`] from `ctx`, validating the required
 /// dependencies up front and producing a helpful CLI-pointing error if
 /// any are absent.
+///
+/// Returns both roles: a `Box<dyn Agent<G>>` for the game loop and a
+/// `Box<dyn PostGameCritic<G>>` for the Phase 5 post-game pass. Both
+/// handles share one `LlmAgent<G>` instance so the critic reads the
+/// scratch the gameplay path mutated.
 fn build_llm<G>(
     ctx: &AgentBuildCtx,
     rules_text: &'static str,
-) -> Result<Box<dyn Agent<G>>>
+) -> Result<BuiltAgent<G>>
 where
     G: Game + ?Sized + Send + Sync + 'static,
     G::State: Send + Sync + 'static,
@@ -310,7 +357,9 @@ where
         max_tokens,
         temperature: None,
     };
-    Ok(Box::new(LlmAgent::<G>::new(ctx.player, cfg)))
+    let agent = LlmAgent::<G>::new(ctx.player, cfg);
+    let (agent_handle, critic_handle) = build_shared_handles(agent);
+    Ok(BuiltAgent::with_critic(agent_handle, critic_handle))
 }
 
 /// Construct a [`StdioAgent<G>`] from `ctx`. The subprocess is *not*
@@ -368,7 +417,7 @@ where
     G::PublicView: Send + Sync + Serialize + Clone + 'static,
     G::Action: Send + Sync + Serialize + Clone + 'static,
 {
-    build_agent_with_game_metadata::<G>(name, ctx, "", "unknown")
+    build_agent_with_game_metadata::<G>(name, ctx, "", "unknown").map(BuiltAgent::into_agent)
 }
 
 /// Lower-level entry used by the per-game factories: accepts the
@@ -379,7 +428,7 @@ fn build_agent_with_game_metadata<G>(
     ctx: &AgentBuildCtx,
     llm_rules_text: &'static str,
     stdio_game_name: &'static str,
-) -> Result<Box<dyn Agent<G>>>
+) -> Result<BuiltAgent<G>>
 where
     G: Game + ?Sized + Send + Sync + 'static,
     G::State: Send + Sync + 'static,
@@ -389,11 +438,11 @@ where
     match name {
         "random" => {
             let rng = ProductionRng::from_seed(ctx.seed);
-            Ok(Box::new(RandomAgent::<G, _>::new(rng)))
+            Ok(BuiltAgent::without_critic(Box::new(RandomAgent::<G, _>::new(rng))))
         }
-        "http-remote" => build_http_remote::<G>(ctx),
+        "http-remote" => Ok(BuiltAgent::without_critic(build_http_remote::<G>(ctx)?)),
         "llm" => build_llm::<G>(ctx, llm_rules_text),
-        "stdio" => build_stdio::<G>(ctx, stdio_game_name),
+        "stdio" => Ok(BuiltAgent::without_critic(build_stdio::<G>(ctx, stdio_game_name)?)),
         other => bail!(
             "unknown or non-generic agent: {other}; known: {}",
             KNOWN_AGENTS.join(", ")
@@ -415,6 +464,19 @@ pub fn build_cribbage_agent(
     spec: &str,
     ctx: &AgentBuildCtx,
 ) -> Result<Box<dyn Agent<CribbageGame>>> {
+    build_cribbage_agent_with_critic(spec, ctx).map(BuiltAgent::into_agent)
+}
+
+/// Phase-5 entry point: build a Cribbage agent and return both the
+/// gameplay handle and the optional post-game-critique handle. For
+/// `llm` seats, `critic` is `Some`; every other kind returns `None`.
+///
+/// # Errors
+/// Same as [`build_cribbage_agent`].
+pub fn build_cribbage_agent_with_critic(
+    spec: &str,
+    ctx: &AgentBuildCtx,
+) -> Result<BuiltAgent<CribbageGame>> {
     let (name, params) = split_agent_spec(spec);
     match name {
         "random" | "http-remote" | "llm" | "stdio" => {
@@ -425,25 +487,24 @@ pub fn build_cribbage_agent(
                 CribbageGame::NAME,
             )
         }
-        "greedy-cribbage" => Ok(Box::new(GreedyAgent::<CribbageGame>::new(
-            ctx.player,
-            cribbage_eval,
+        "greedy-cribbage" => Ok(BuiltAgent::without_critic(Box::new(
+            GreedyAgent::<CribbageGame>::new(ctx.player, cribbage_eval),
         ))),
         "heuristic-cribbage" => {
             let rng = ProductionRng::from_seed(ctx.seed);
-            Ok(Box::new(HeuristicAgent::<CribbageGame, _>::with_temperature(
-                ctx.player,
-                cribbage_eval,
-                rng,
-                DEFAULT_TEMPERATURE,
+            Ok(BuiltAgent::without_critic(Box::new(
+                HeuristicAgent::<CribbageGame, _>::with_temperature(
+                    ctx.player,
+                    cribbage_eval,
+                    rng,
+                    DEFAULT_TEMPERATURE,
+                ),
             )))
         }
         "ismcts-cribbage" => {
             let cfg = ismcts_config_from_params(params, ctx.seed)?;
-            Ok(Box::new(ISMCTSAgent::<CribbageGame>::with_eval(
-                cfg,
-                ctx.player,
-                cribbage_eval,
+            Ok(BuiltAgent::without_critic(Box::new(
+                ISMCTSAgent::<CribbageGame>::with_eval(cfg, ctx.player, cribbage_eval),
             )))
         }
         other => bail!(
@@ -466,6 +527,19 @@ pub fn build_shipwreck_agent(
     spec: &str,
     ctx: &AgentBuildCtx,
 ) -> Result<Box<dyn Agent<ShipWreckGame>>> {
+    build_shipwreck_agent_with_critic(spec, ctx).map(BuiltAgent::into_agent)
+}
+
+/// Phase-5 entry point: build a ShipWreck agent and return both the
+/// gameplay handle and the optional post-game-critique handle. For
+/// `llm` seats, `critic` is `Some`; every other kind returns `None`.
+///
+/// # Errors
+/// Same as [`build_shipwreck_agent`].
+pub fn build_shipwreck_agent_with_critic(
+    spec: &str,
+    ctx: &AgentBuildCtx,
+) -> Result<BuiltAgent<ShipWreckGame>> {
     let (name, params) = split_agent_spec(spec);
     match name {
         "random" | "http-remote" | "llm" | "stdio" => {
@@ -476,25 +550,24 @@ pub fn build_shipwreck_agent(
                 ShipWreckGame::NAME,
             )
         }
-        "greedy-shipwreck" => Ok(Box::new(GreedyAgent::<ShipWreckGame>::new(
-            ctx.player,
-            shipwreck_eval,
+        "greedy-shipwreck" => Ok(BuiltAgent::without_critic(Box::new(
+            GreedyAgent::<ShipWreckGame>::new(ctx.player, shipwreck_eval),
         ))),
         "heuristic-shipwreck" => {
             let rng = ProductionRng::from_seed(ctx.seed);
-            Ok(Box::new(HeuristicAgent::<ShipWreckGame, _>::with_temperature(
-                ctx.player,
-                shipwreck_eval,
-                rng,
-                DEFAULT_TEMPERATURE,
+            Ok(BuiltAgent::without_critic(Box::new(
+                HeuristicAgent::<ShipWreckGame, _>::with_temperature(
+                    ctx.player,
+                    shipwreck_eval,
+                    rng,
+                    DEFAULT_TEMPERATURE,
+                ),
             )))
         }
         "ismcts-shipwreck" => {
             let cfg = ismcts_config_from_params(params, ctx.seed)?;
-            Ok(Box::new(ISMCTSAgent::<ShipWreckGame>::with_eval(
-                cfg,
-                ctx.player,
-                shipwreck_eval,
+            Ok(BuiltAgent::without_critic(Box::new(
+                ISMCTSAgent::<ShipWreckGame>::with_eval(cfg, ctx.player, shipwreck_eval),
             )))
         }
         other => bail!(
