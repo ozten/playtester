@@ -46,6 +46,11 @@ enum Command {
     /// Extracts structured tags from open-ended responses using a
     /// second LLM call per seat.
     CritiqueCode(commands::critique_code::CritiqueCodeArgs),
+
+    /// Phase 6: diff two ingested log directories, flag statistically
+    /// significant metric and critique deltas, emit a markdown "what
+    /// changed" report.
+    Compare(commands::compare::CompareArgs),
 }
 
 fn main() -> Result<()> {
@@ -58,5 +63,6 @@ fn main() -> Result<()> {
         Command::ApiSchema(args) => commands::api_schema::run(args),
         Command::Matchup(args) => commands::matchup::run(args),
         Command::CritiqueCode(args) => commands::critique_code::run(args),
+        Command::Compare(args) => commands::compare::run(args),
     }
 }
