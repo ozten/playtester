@@ -1,13 +1,18 @@
 ---
 title: "feat: Post-game LLM critique (Phase 5)"
 type: feat
-status: active
+status: shipped
 date: 2026-04-23
+shipped: 2026-04-23
 origin: playtest-roadmap.md § "Phase 5 — Post-game LLM critique"
 supersedes_section: "Phase 5 (Post-game LLM critique) in the roadmap — this plan is the first plan of the re-ordered remaining sequence P5 → P6 → P4 → P8 (P7 dropped 2026-04-23)."
 ---
 
 # feat: Post-game LLM critique (Phase 5)
+
+> **Status: shipped.** Units 1–8 all landed. Automated coverage is
+> stub-only (per Phase-3 precedent); the R5.9 exit-criterion
+> benchmark is manual and documented in `docs/BENCHMARKS.md`.
 
 ## Overview
 
@@ -192,7 +197,7 @@ Coded-tag JSON shape (reporter input):
 
 ## Implementation Units
 
-- [ ] **Unit 1: `QuestionnaireSpec` + critique prompt builder**
+- [x] **Unit 1: `QuestionnaireSpec` + critique prompt builder**
 
 **Goal:** Define the Likert-plus-open-ended schema, a hashable static default, and the prompt builder that produces a `LlmRequest` from the spec + the game's final public view + the agent's scratch buffer. No side effects yet — just the schema and the prompt.
 
@@ -233,7 +238,7 @@ Coded-tag JSON shape (reporter input):
 
 ---
 
-- [ ] **Unit 2: `CritiqueSidecar` — sidecar writer for `<gid>.critique.jsonl`**
+- [x] **Unit 2: `CritiqueSidecar` — sidecar writer for `<gid>.critique.jsonl`**
 
 **Goal:** The append-only JSONL sidecar for questionnaire and coded-tag records. Mirrors `LlmSidecar` structurally but is semantically separate: the header carries the questionnaire-spec hash, records are `questionnaire_response` and `coded_tag`, and the file path is `<run>/games/<gid>.critique.jsonl`.
 
@@ -272,7 +277,7 @@ Coded-tag JSON shape (reporter input):
 
 ---
 
-- [ ] **Unit 3: `LlmAgent::post_game_critique` + replay safety**
+- [x] **Unit 3: `LlmAgent::post_game_critique` + replay safety**
 
 **Goal:** The critique method on `LlmAgent`. Fires one `LlmClient.complete()` call using the agent's already-warm cached system blocks and the Unit 1 prompt builder, parses the JSON reply, appends a `questionnaire_response` record to the provided `CritiqueSidecar`. Replay must not re-call: the critique call uses the same `LlmClient` handle, so a `PlaybackLlmClient` tape replays deterministically; a production client skips the call when no critique sidecar is provided.
 
@@ -313,7 +318,7 @@ Coded-tag JSON shape (reporter input):
 
 ---
 
-- [ ] **Unit 4: Dispatcher wiring — `RunExtras::critique_deps`, `--critique` CLI flag**
+- [x] **Unit 4: Dispatcher wiring — `RunExtras::critique_deps`, `--critique` CLI flag**
 
 **Goal:** Plumb the optional critique sidecar + spec through the existing `RunExtras` / `LlmCliDeps` chain, add a `--critique` flag to `playtest play`, and invoke `post_game_critique` on every LlmAgent seat after `GameLoop::run` returns.
 
@@ -355,7 +360,7 @@ Coded-tag JSON shape (reporter input):
 
 ---
 
-- [ ] **Unit 5: Coder prompt + `playtest critique-code` subcommand**
+- [x] **Unit 5: Coder prompt + `playtest critique-code` subcommand**
 
 **Goal:** The offline coder pass that reads each `<gid>.critique.jsonl`, sends one LlmClient call per questionnaire-response with non-empty open-ended answers, parses a `Vec<CodedTag>`, and appends a `coded_tag` record. Idempotent: re-running rewrites tags for `(game_id, seat)` pairs already coded.
 
@@ -397,7 +402,7 @@ Coded-tag JSON shape (reporter input):
 
 ---
 
-- [ ] **Unit 6: SQLite schema + ingest extension**
+- [x] **Unit 6: SQLite schema + ingest extension**
 
 **Goal:** Two new tables (`critique_likert`, `critique_tags`). The existing ingest pipeline gains a second pass that reads `.critique.jsonl` for each game and populates both tables inside the same transaction.
 
@@ -457,7 +462,7 @@ Coded-tag JSON shape (reporter input):
 
 ---
 
-- [ ] **Unit 7: Markdown reporter — "Subjective critique" section**
+- [x] **Unit 7: Markdown reporter — "Subjective critique" section**
 
 **Goal:** Extend the markdown reporter to include per-question Likert means + 95% CI across all critiqued games, and tag-frequency histograms (game-wide + per `ref_card`). The section appears only when `critique_likert` or `critique_tags` is non-empty; otherwise omitted cleanly.
 
@@ -497,7 +502,7 @@ Coded-tag JSON shape (reporter input):
 
 ---
 
-- [ ] **Unit 8: ShipWreck `events_enabled` config + exit-criterion benchmark**
+- [x] **Unit 8: ShipWreck `events_enabled` config + exit-criterion benchmark**
 
 **Goal:** Add a runtime toggle to ShipWreck that omits event cards from the wreckage pool; ship an `#[ignore]`'d benchmark that drives 100 games with and without Typhoon, asserts the Likert-agency delta, and documents the manual recipe in `docs/BENCHMARKS.md`.
 
