@@ -18,11 +18,13 @@
 //!   (Welch) and coded-tag frequency counts (z-test).
 
 pub mod engine;
+pub mod report;
 
 pub use engine::{
     CompareOpts, CompareResult, Correction, CritiqueAvailability, Finding, FindingKind,
     run_compare,
 };
+pub use report::write_compare_report;
 
 use rusqlite::{Connection, Error as SqliteError, params};
 

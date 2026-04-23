@@ -25,7 +25,7 @@ pub use compare::{
     CompareOpts, CompareResult, Correction, CritiqueAvailability, CritiqueTagTotal, Finding,
     FindingKind, MetricKey, PairedMetrics, enumerate_paired_metrics, fetch_agent_outcomes,
     fetch_games_count, fetch_likert_questions, fetch_likert_samples, fetch_numeric_samples,
-    fetch_tag_totals, fetch_total_critique_responses, run_compare,
+    fetch_tag_totals, fetch_total_critique_responses, run_compare, write_compare_report,
 };
 pub use stats::{
     StatsError, TestOutcome, benjamini_hochberg, bonferroni, standard_normal_cdf,
