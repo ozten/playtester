@@ -12,9 +12,14 @@
 //! - `<gid>.critique.jsonl` — subjective-critique sidecar (Phase 5, this module).
 
 pub mod prompt;
+pub mod sidecar;
 pub mod spec;
 
 pub use prompt::{build_critique_instructions, build_critique_system_blocks, build_critique_user_message};
+pub use sidecar::{
+    CodedTag, CodedTagRecord, CritiqueSidecar, CritiqueSidecarHeader,
+    QuestionnaireResponseRecord,
+};
 pub use spec::{
     OpenEndedPrompt, QuestionItem, QuestionnaireSpec, SpecVersion, default_questionnaire_v1,
 };

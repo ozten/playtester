@@ -12,7 +12,8 @@ pub mod sidecar;
 
 pub use agent::{LlmAgent, LlmAgentConfig};
 pub use critique::{
-    OpenEndedPrompt, QuestionItem, QuestionnaireSpec, SpecVersion,
+    CodedTag, CodedTagRecord, CritiqueSidecar, CritiqueSidecarHeader, OpenEndedPrompt,
+    QuestionItem, QuestionnaireResponseRecord, QuestionnaireSpec, SpecVersion,
     build_critique_instructions, build_critique_system_blocks, build_critique_user_message,
     default_questionnaire_v1,
 };
