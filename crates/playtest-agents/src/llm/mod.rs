@@ -5,10 +5,16 @@
 //! cost-observability log written alongside the main event log.
 
 pub mod agent;
+pub mod critique;
 pub mod prompt;
 pub mod scratch;
 pub mod sidecar;
 
 pub use agent::{LlmAgent, LlmAgentConfig};
+pub use critique::{
+    OpenEndedPrompt, QuestionItem, QuestionnaireSpec, SpecVersion,
+    build_critique_instructions, build_critique_system_blocks, build_critique_user_message,
+    default_questionnaire_v1,
+};
 pub use scratch::{MAX_TURN_LOG, ScratchBuffer};
 pub use sidecar::{LlmCallRecord, LlmSidecar, SidecarHeader, sha256_hex};
