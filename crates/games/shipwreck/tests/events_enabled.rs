@@ -118,13 +118,100 @@ fn config_round_trips_through_serde() {
 #[test]
 fn legacy_config_without_events_field_defaults_to_true() {
     // Backward-compat: old serialized configs that predate
-    // `events_enabled` should deserialize with the default of
-    // `true`, thanks to `#[serde(default = ...)]`.
+    // `events_enabled` / per-card toggles should deserialize with
+    // every bool defaulted to `true`, via `#[serde(default = ...)]`.
     let legacy = r#"{"num_players": 3}"#;
     let cfg: ShipWreckConfig = serde_json::from_str(legacy).unwrap();
     assert_eq!(cfg.num_players, 3);
-    assert!(
-        cfg.events_enabled,
-        "legacy config without events_enabled must default to true"
-    );
+    assert!(cfg.events_enabled);
+    assert!(cfg.shark_enabled);
+    assert!(cfg.typhoon_enabled);
+    assert!(cfg.flying_fish_enabled);
+}
+
+// -----------------------------------------------------------------
+// Phase 6 per-card toggle tests
+// -----------------------------------------------------------------
+
+use playtest_shipwreck::EventCard;
+
+fn count_event_kind(state: &GameState, kind: EventCard) -> usize {
+    let matches_kind = |c: &Card| {
+        if let Card::Event(ec) = c { *ec == kind } else { false }
+    };
+    let mut n = 0;
+    for seat in &state.players {
+        n += seat.hand.iter().filter(|c| matches_kind(c)).count();
+    }
+    for pool in &state.face_up_pools {
+        n += pool.iter().filter(|c| matches_kind(c)).count();
+    }
+    n += state.wreckage_deck.iter().filter(|c| matches_kind(c)).count();
+    n
+}
+
+#[test]
+fn disabling_single_event_card_removes_only_that_kind() {
+    let cfg_on = ShipWreckConfig::new(3).unwrap();
+    let cfg_no_typhoon = cfg_on.with_event_card(EventCard::Typhoon, false);
+    let state_on = setup_state(cfg_on, 42);
+    let state_no_typhoon = setup_state(cfg_no_typhoon, 42);
+
+    assert!(count_event_kind(&state_on, EventCard::Typhoon) > 0);
+    assert_eq!(count_event_kind(&state_no_typhoon, EventCard::Typhoon), 0);
+    // Shark and FlyingFish still present.
+    assert!(count_event_kind(&state_no_typhoon, EventCard::Shark) > 0);
+    assert!(count_event_kind(&state_no_typhoon, EventCard::FlyingFish) > 0);
+}
+
+#[test]
+fn events_enabled_false_overrides_per_card_flags() {
+    // Even if all per-card flags are true, `events_enabled: false`
+    // wins — `event_card_active` returns false for every kind.
+    let cfg = ShipWreckConfig::new(2).unwrap().with_events_enabled(false);
+    assert!(cfg.shark_enabled); // per-card flag unchanged
+    for kind in [EventCard::Shark, EventCard::Typhoon, EventCard::FlyingFish] {
+        assert!(
+            !cfg.event_card_active(kind),
+            "events_enabled=false must override per-card flag for {kind:?}"
+        );
+    }
+    let state = setup_state(cfg, 42);
+    assert_eq!(count_event_cards_in_state(&state), 0);
+}
+
+#[test]
+fn per_card_flags_round_trip_through_serde() {
+    let cfg = ShipWreckConfig::new(3)
+        .unwrap()
+        .with_event_card(EventCard::Shark, false)
+        .with_event_card(EventCard::FlyingFish, false);
+    let json = serde_json::to_string(&cfg).unwrap();
+    let back: ShipWreckConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, cfg);
+    assert!(!back.shark_enabled);
+    assert!(back.typhoon_enabled);
+    assert!(!back.flying_fish_enabled);
+}
+
+#[test]
+fn event_card_active_matrix() {
+    // Explicit matrix test — all 8 combinations of (master, shark).
+    for events_enabled in [true, false] {
+        for shark_enabled in [true, false] {
+            let cfg = ShipWreckConfig {
+                num_players: 2,
+                events_enabled,
+                shark_enabled,
+                typhoon_enabled: true,
+                flying_fish_enabled: true,
+            };
+            let expected = events_enabled && shark_enabled;
+            assert_eq!(
+                cfg.event_card_active(EventCard::Shark),
+                expected,
+                "events_enabled={events_enabled}, shark_enabled={shark_enabled}"
+            );
+        }
+    }
 }

@@ -19,7 +19,9 @@ use playtest_core::{Agent, Game, GameLoop};
 use playtest_cribbage::{CribbageConfig, CribbageGame, Event as CribbageEvent};
 use playtest_log::{EventLogWriter, LogHeader, LogRecord, SCHEMA_VERSION, compute_config_hash};
 use playtest_ports::{Clock, GameEventSink, LlmClient};
-use playtest_shipwreck::{Event as ShipWreckEvent, ShipWreckConfig, ShipWreckGame};
+use playtest_shipwreck::{
+    Event as ShipWreckEvent, EventCard, ShipWreckConfig, ShipWreckGame,
+};
 
 use crate::agent_registry::{
     AgentBuildCtx, BuiltAgent, build_cribbage_agent_with_critic, build_shipwreck_agent_with_critic,
@@ -80,6 +82,12 @@ pub struct RunExtras<'a> {
     pub remote_transports: Option<&'a RemoteTransports>,
     pub llm_deps: Option<&'a LlmCliDeps>,
     pub stdio_cfg: Option<&'a StdioAgentConfig>,
+    /// Phase 6: per-event-card disables for ShipWreck. Every listed
+    /// card has `<kind>_enabled` flipped to false in the game's
+    /// config; cohorts with different disable lists produce different
+    /// config hashes automatically. Silent no-op for non-ShipWreck
+    /// games.
+    pub shipwreck_disabled_events: Vec<EventCard>,
 }
 
 impl<'a> RunExtras<'a> {
@@ -103,6 +111,12 @@ impl<'a> RunExtras<'a> {
     #[must_use]
     pub fn with_stdio_cfg(mut self, c: &'a StdioAgentConfig) -> Self {
         self.stdio_cfg = Some(c);
+        self
+    }
+
+    #[must_use]
+    pub fn with_disabled_shipwreck_events(mut self, events: Vec<EventCard>) -> Self {
+        self.shipwreck_disabled_events = events;
         self
     }
 }
@@ -313,8 +327,14 @@ fn run_shipwreck_into_sink(
     // `--agents a,b,c` implies a 3-player game. The registry validates
     // the count is in range before we get here, so it's safe to unwrap.
     let n = u8::try_from(agent_names.len()).expect("agent count fits in u8");
-    let cfg = ShipWreckConfig::new(n)
+    let mut cfg = ShipWreckConfig::new(n)
         .expect("agent count validated against registry player range before dispatch");
+    // Phase 6: apply any per-event-card disables from --shipwreck-
+    // disable-event. Each flipped flag changes the config_hash, so
+    // restricted-play cohorts land in separate SQLite buckets.
+    for kind in &extras.shipwreck_disabled_events {
+        cfg = cfg.with_event_card(*kind, false);
+    }
 
     let built: Vec<BuiltAgent<ShipWreckGame>> = agent_names
         .iter()

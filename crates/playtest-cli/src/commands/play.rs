@@ -135,6 +135,33 @@ pub struct PlayArgs {
     /// Disabled by default because critique costs extra tokens.
     #[arg(long, default_value_t = false)]
     pub critique: bool,
+
+    // --- Phase 6 restricted-play flag (ShipWreck only) ---
+    /// Disable a specific ShipWreck event card for this run.
+    /// Repeatable: `--shipwreck-disable-event shark
+    /// --shipwreck-disable-event typhoon` disables both. Values
+    /// must be `shark`, `typhoon`, or `flying_fish`. No-op when
+    /// `--game` is not `shipwreck`.
+    #[arg(long = "shipwreck-disable-event")]
+    pub shipwreck_disabled_events: Vec<ShipwreckEventArg>,
+}
+
+/// Clap-facing value type for `--shipwreck-disable-event`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ShipwreckEventArg {
+    Shark,
+    Typhoon,
+    FlyingFish,
+}
+
+impl From<ShipwreckEventArg> for playtest_shipwreck::EventCard {
+    fn from(arg: ShipwreckEventArg) -> Self {
+        match arg {
+            ShipwreckEventArg::Shark => Self::Shark,
+            ShipwreckEventArg::Typhoon => Self::Typhoon,
+            ShipwreckEventArg::FlyingFish => Self::FlyingFish,
+        }
+    }
 }
 
 /// Run the `play` command.
@@ -226,6 +253,7 @@ pub fn run(args: &PlayArgs) -> Result<()> {
             stdio_cfg.as_ref(),
             if has_llm_seat { Some(&sidecar_path) } else { None },
             critique_spec.as_ref(),
+            &args.shipwreck_disabled_events,
             if critique_spec.is_some() {
                 Some(&critique_path)
             } else {
@@ -312,6 +340,7 @@ fn run_single_game(
     stdio_cfg: Option<&StdioAgentConfig>,
     sidecar_path: Option<&Path>,
     critique_spec: Option<&Arc<QuestionnaireSpec>>,
+    shipwreck_disabled_events: &[ShipwreckEventArg],
     critique_path: Option<&Path>,
 ) -> Result<()> {
     // If any seat is `llm`, open the sidecar and seal a header line
@@ -383,6 +412,14 @@ fn run_single_game(
     }
     if let Some(c) = stdio_cfg {
         extras = extras.with_stdio_cfg(c);
+    }
+    if !shipwreck_disabled_events.is_empty() {
+        let events: Vec<playtest_shipwreck::EventCard> = shipwreck_disabled_events
+            .iter()
+            .copied()
+            .map(Into::into)
+            .collect();
+        extras = extras.with_disabled_shipwreck_events(events);
     }
 
     let fs = ProductionFileSystem::new();
