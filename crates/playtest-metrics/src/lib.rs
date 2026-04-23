@@ -17,7 +17,13 @@ pub mod markdown;
 pub mod query;
 pub mod registry;
 pub mod reporter;
+pub mod stats;
 pub mod value;
+
+pub use stats::{
+    StatsError, TestOutcome, benjamini_hochberg, bonferroni, standard_normal_cdf,
+    two_proportion_z_test, two_sided_p_from_z, welch_t_test,
+};
 
 pub use builtin::BuiltInMetrics;
 pub use definition::{MetricDef, MetricKind, MetricScope};
