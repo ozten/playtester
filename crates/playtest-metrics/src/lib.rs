@@ -10,6 +10,7 @@
 //! arrive in later Phase 1 units.
 
 pub mod builtin;
+pub mod compare;
 pub mod definition;
 pub mod ingest;
 pub mod log;
@@ -20,6 +21,11 @@ pub mod reporter;
 pub mod stats;
 pub mod value;
 
+pub use compare::{
+    CritiqueTagTotal, MetricKey, PairedMetrics, enumerate_paired_metrics, fetch_agent_outcomes,
+    fetch_games_count, fetch_likert_questions, fetch_likert_samples, fetch_numeric_samples,
+    fetch_tag_totals, fetch_total_critique_responses,
+};
 pub use stats::{
     StatsError, TestOutcome, benjamini_hochberg, bonferroni, standard_normal_cdf,
     two_proportion_z_test, two_sided_p_from_z, welch_t_test,
