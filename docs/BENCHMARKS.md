@@ -383,3 +383,111 @@ without network: the stdio path uses a Python subprocess that echoes
 `LlmClient` wired through the same `run_single_game_into_sink_with_extras`
 dispatcher the CLI uses. Stub or not, the paths covered are the same
 ones the real Haiku / local-Llama runs above travel through.
+
+## Phase 5 exit criteria
+
+Phase 5 adds the post-game LLM critique pipeline: `--critique` gate on
+`playtest play`, the `playtest critique-code` offline coder pass, two
+new SQLite tables, and a new "Subjective critique" markdown section.
+Full automated coverage (stubs only) lives in
+
+```
+crates/playtest-agents/tests/llm_agent_post_game_critique.rs
+crates/playtest-cli/tests/e2e_critique_stubbed.rs
+crates/playtest-cli/tests/e2e_critique_code_stubbed.rs
+crates/playtest-metrics/tests/critique_ingest.rs
+crates/playtest-metrics/tests/critique_report.rs
+crates/games/shipwreck/tests/events_enabled.rs
+```
+
+The R5.9 criterion is **manual** — like R3.8/R3.9, the real-LLM
+numbers that back it don't belong in CI.
+
+### R5.9 — Frustrating-card delta visible in critique aggregates
+
+100 ShipWreck games with `events_enabled: true` (Typhoon active) vs.
+100 with `events_enabled: false` (baseline). Mean Likert `agency`
+score differs by ≥ 0.5 on the 5-point scale with non-overlapping 95%
+CIs. Coded-tag cluster: the `events_enabled = true` run has
+`forced_sacrifice` (or `random_loss`) coded in ≥ 25% of open-ended
+responses; the baseline run has ≤ 5%.
+
+Manually invoked, requires a valid `ANTHROPIC_API_KEY`. Estimated
+cost: $4–$10 for both 100-game runs combined at Haiku pricing.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-api03-...
+
+# Run A: baseline (no event cards).
+cargo run --release --bin playtest -- play \
+  --game shipwreck \
+  --agents llm,llm \
+  --model claude-haiku-4-5-20251001 \
+  --llm-provider anthropic \
+  --llm-budget-tokens 2000000 \
+  --critique \
+  --seed 1 \
+  --games 100 \
+  --out ./target/playtest-runs/r5-9-baseline-$(date +%s) \
+  --fixed-time 0
+# NOTE: ShipWreck's events_enabled is a game config, not a CLI flag
+# today — edit ShipWreckConfig::new to set events_enabled: false for
+# the baseline half of the benchmark, or use a purpose-built recipe
+# binary that threads the flag through. Tracked as a follow-up.
+
+# Run B: adversarial (Typhoon active — the default).
+cargo run --release --bin playtest -- play \
+  --game shipwreck \
+  --agents llm,llm \
+  --model claude-haiku-4-5-20251001 \
+  --llm-provider anthropic \
+  --llm-budget-tokens 2000000 \
+  --critique \
+  --seed 1 \
+  --games 100 \
+  --out ./target/playtest-runs/r5-9-adversarial-$(date +%s) \
+  --fixed-time 0
+
+# Coder pass on each run dir:
+cargo run --release --bin playtest -- critique-code \
+  --run-dir ./target/playtest-runs/r5-9-baseline-XXX \
+  --model claude-haiku-4-5-20251001 \
+  --llm-provider anthropic
+cargo run --release --bin playtest -- critique-code \
+  --run-dir ./target/playtest-runs/r5-9-adversarial-XXX \
+  --model claude-haiku-4-5-20251001 \
+  --llm-provider anthropic
+
+# Markdown reports with the new "Subjective critique" section:
+cargo run --release --bin playtest -- report \
+  --logs-dir ./target/playtest-runs/r5-9-baseline-XXX \
+  --out ./target/playtest-runs/r5-9-baseline-XXX/report.md \
+  --game shipwreck
+cargo run --release --bin playtest -- report \
+  --logs-dir ./target/playtest-runs/r5-9-adversarial-XXX \
+  --out ./target/playtest-runs/r5-9-adversarial-XXX/report.md \
+  --game shipwreck
+```
+
+Compare the two reports by hand. The adversarial report should show:
+- `agency` Likert mean ≥ 0.5 points below the baseline report.
+- Non-overlapping 95% CIs on `agency`, `frustration`, or both.
+- `forced_sacrifice` / `random_loss` in the overall coded-tag table
+  with a count corresponding to ≥ 25% of respondents.
+- A per-card table for `typhoon` with ≥ 3 mentions.
+
+If the agency delta is below 0.5 on the first run, levers in order
+(shortest → largest effect):
+
+1. Confirm the baseline config actually ran without events — check
+   any `.jsonl` log for `"card_type":"Event"`. If present, the
+   `events_enabled: false` override didn't take effect.
+2. Increase sample size from 100 to 250 per cohort — variance may
+   be tighter than the 0.5-Likert signal.
+3. Introduce a purpose-built `TurnSkipEvent` card with higher
+   severity than Typhoon. Considered out of scope for Phase 5.
+
+### Automated Phase 5 coverage (runs in CI)
+
+Six test files above, all stub-driven. No network traffic, no real
+LLM tokens, no real-clock time — the same discipline as Phase 3.

@@ -88,6 +88,12 @@ pub fn build_initial_state(
 
     // --- 2 + 3. Build wreckage deck (leftover player cards + rest) ---
     let mut wreckage: Vec<Card> = all_wreckage_cards();
+    // Phase 5: optional event-card toggle. Default config seeds events;
+    // the R5.9 baseline variant strips them so the LLM never sees Shark/
+    // Typhoon/FlyingFish during play.
+    if !cfg.events_enabled {
+        wreckage.retain(|c| !matches!(c, Card::Event(_)));
+    }
     for leftover in player_deck.into_iter().skip(n) {
         wreckage.push(Card::Player(leftover));
     }
