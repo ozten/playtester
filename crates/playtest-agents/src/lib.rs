@@ -24,11 +24,12 @@ pub use greedy::GreedyAgent;
 pub use heuristic::{DEFAULT_TEMPERATURE, HeuristicAgent};
 pub use ismcts::{ISMCTSAgent, ISMCTSConfig, parse_config_overrides};
 pub use llm::{
-    CodedTag, CodedTagRecord, CritiqueSidecar, CritiqueSidecarHeader, LlmAgent, LlmAgentConfig,
-    LlmCallRecord, LlmSidecar, OpenEndedPrompt, PostGameCritic, QuestionItem,
-    QuestionnaireResponseRecord, QuestionnaireSpec, ScratchBuffer, SharedLlmAgent, SidecarHeader,
-    SpecVersion, build_critique_instructions, build_critique_system_blocks,
-    build_critique_user_message, build_shared_handles, default_questionnaire_v1, sha256_hex,
+    CODER_TAG_TAXONOMY, CodedTag, CodedTagRecord, CoderOutcome, CritiqueSidecar,
+    CritiqueSidecarHeader, LlmAgent, LlmAgentConfig, LlmCallRecord, LlmSidecar, OpenEndedPrompt,
+    PostGameCritic, QuestionItem, QuestionnaireResponseRecord, QuestionnaireSpec, ScratchBuffer,
+    SharedLlmAgent, SidecarHeader, SpecVersion, build_coder_request, build_coder_system_block,
+    build_critique_instructions, build_critique_system_blocks, build_critique_user_message,
+    build_shared_handles, code_once, default_questionnaire_v1, parse_coder_reply, sha256_hex,
 };
 pub use random::RandomAgent;
 pub use remote::{

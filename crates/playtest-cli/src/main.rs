@@ -41,6 +41,11 @@ enum Command {
     /// Round-robin matchups between a pool of agents. Emits a markdown
     /// win-rate matrix.
     Matchup(commands::matchup::MatchupArgs),
+
+    /// Phase 5: offline coder pass over `.critique.jsonl` sidecars.
+    /// Extracts structured tags from open-ended responses using a
+    /// second LLM call per seat.
+    CritiqueCode(commands::critique_code::CritiqueCodeArgs),
 }
 
 fn main() -> Result<()> {
@@ -52,5 +57,6 @@ fn main() -> Result<()> {
         Command::Serve(args) => commands::serve::run(args),
         Command::ApiSchema(args) => commands::api_schema::run(args),
         Command::Matchup(args) => commands::matchup::run(args),
+        Command::CritiqueCode(args) => commands::critique_code::run(args),
     }
 }

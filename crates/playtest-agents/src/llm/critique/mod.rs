@@ -12,12 +12,17 @@
 //! - `<gid>.critique.jsonl` — subjective-critique sidecar (Phase 5, this module).
 
 pub mod agent;
+pub mod coder;
 pub mod prompt;
 pub mod shared;
 pub mod sidecar;
 pub mod spec;
 
 pub use agent::critique_once;
+pub use coder::{
+    CODER_TAG_TAXONOMY, CoderOutcome, build_coder_request, build_coder_system_block, code_once,
+    parse_coder_reply,
+};
 pub use prompt::{build_critique_instructions, build_critique_system_blocks, build_critique_user_message};
 pub use shared::{PostGameCritic, SharedLlmAgent, build_shared_handles};
 pub use sidecar::{
