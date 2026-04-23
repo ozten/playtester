@@ -1,10 +1,11 @@
-//! Cross-DB compare primitives for Phase 6.
+//! Phase 6 compare module.
 //!
 //! Given two independent `Connection` handles — one per log dir
 //! ingested into an in-memory SQLite — this module produces the
-//! paired sample vectors that [`crate::stats`] runs tests over. Each
-//! query binds to exactly one connection; there are no cross-DB SQL
-//! joins. The compare engine (Unit 3) threads both handles through.
+//! paired sample vectors that [`crate::stats`] runs tests over, and
+//! the [`engine`] submodule ties those samples into significance-
+//! corrected findings. Each query binds to exactly one connection;
+//! there are no cross-DB SQL joins.
 //!
 //! Three sample families populate the compare report:
 //!
@@ -15,6 +16,13 @@
 //!   name. Two-proportion z-test consumes these.
 //! - **Phase 5 critique signals** — per-question Likert samples
 //!   (Welch) and coded-tag frequency counts (z-test).
+
+pub mod engine;
+
+pub use engine::{
+    CompareOpts, CompareResult, Correction, CritiqueAvailability, Finding, FindingKind,
+    run_compare,
+};
 
 use rusqlite::{Connection, Error as SqliteError, params};
 
