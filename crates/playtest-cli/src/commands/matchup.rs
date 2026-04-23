@@ -54,6 +54,12 @@ pub struct MatchupArgs {
     /// Output markdown file. Overwritten on each run.
     #[arg(long)]
     pub out: PathBuf,
+
+    /// Phase 6: append a Bradley–Terry ratings table below the
+    /// win-rate matrix. MLE strengths via the MM algorithm; 95% CIs
+    /// on log-θ via parametric bootstrap (200 resamples).
+    #[arg(long, default_value_t = false)]
+    pub bradley_terry: bool,
 }
 
 /// Run the `matchup` command.
@@ -92,6 +98,9 @@ pub fn run(args: &MatchupArgs) -> Result<()> {
     let n = agent_specs.len();
     let mut matrix = vec![vec![0.0f64; n]; n];
     let mut draws_matrix = vec![vec![0u32; n]; n];
+    // Raw win counts for Bradley-Terry. `wins[i][j]` holds total i
+    // wins against j summed across both seatings.
+    let mut wins_matrix = vec![vec![0u64; n]; n];
 
     for i in 0..n {
         for j in 0..n {
@@ -108,10 +117,20 @@ pub fn run(args: &MatchupArgs) -> Result<()> {
             )?;
             matrix[i][j] = f64::from(i_wins) / f64::from(args.games_per_pair);
             draws_matrix[i][j] = draws;
+            wins_matrix[i][j] = u64::from(i_wins);
         }
     }
 
-    let md = render_matrix(&args.game, &agent_specs, args.games_per_pair, &matrix, &draws_matrix);
+    let mut md = render_matrix(
+        &args.game,
+        &agent_specs,
+        args.games_per_pair,
+        &matrix,
+        &draws_matrix,
+    );
+    if args.bradley_terry {
+        md.push_str(&render_bradley_terry(&agent_specs, &wins_matrix));
+    }
     std::fs::write(&args.out, md)
         .with_context(|| format!("writing matchup matrix to {}", args.out.display()))?;
     println!(
@@ -256,5 +275,64 @@ fn render_matrix(
 
     out.push('\n');
     out.push_str("Cells marked `(Nd)` include N draws, excluded from the win-rate numerator.\n");
+    out
+}
+
+use playtest_metrics::{BradleyTerryInput, BradleyTerryOpts, bradley_terry_mle};
+
+/// Render a Bradley–Terry ratings table from a symmetric win matrix.
+/// Agents are sorted by `θ̂` descending; ties broken by name asc.
+/// Returns a markdown fragment ready to append to the matrix output.
+fn render_bradley_terry(agents: &[String], wins: &[Vec<u64>]) -> String {
+    use core::fmt::Write as _;
+
+    // Collapse wins[i][j] across both seatings.
+    let n = agents.len();
+    let mut symmetric = vec![vec![0u64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            if i != j {
+                symmetric[i][j] = wins[i][j];
+            }
+        }
+    }
+    let input = BradleyTerryInput {
+        agent_names: agents.to_vec(),
+        wins: symmetric,
+    };
+    let ratings = match bradley_terry_mle(&input, &BradleyTerryOpts::default()) {
+        Ok(r) => r,
+        Err(e) => {
+            return format!("\n### Bradley–Terry ratings\n\n*Bradley–Terry fit failed: {e}*\n");
+        }
+    };
+
+    // Sort by θ̂ desc, ties by name asc.
+    let mut sorted = ratings;
+    sorted.sort_by(|a, b| {
+        b.theta
+            .partial_cmp(&a.theta)
+            .unwrap_or(core::cmp::Ordering::Equal)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    let mut out = String::new();
+    out.push_str("\n### Bradley–Terry ratings\n\n");
+    out.push_str("Strengths θ̂ (geometric mean normalized to 1). 95% CI is on **log θ** via parametric bootstrap (200 resamples).\n\n");
+    out.push_str("| rank | agent | θ̂ | log θ 95% CI |\n");
+    out.push_str("| ---- | ----- | -- | ------------ |\n");
+    for (rank, r) in sorted.iter().enumerate() {
+        let ci = match (r.log_theta_ci_low, r.log_theta_ci_high) {
+            (Some(lo), Some(hi)) => format!("[{lo:+.2}, {hi:+.2}]"),
+            _ => "—".to_owned(),
+        };
+        let _ = writeln!(
+            out,
+            "| {rank} | {name} | {theta:.3} | {ci} |",
+            rank = rank + 1,
+            name = r.name,
+            theta = r.theta,
+        );
+    }
     out
 }

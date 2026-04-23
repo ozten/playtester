@@ -1,16 +1,23 @@
-//! In-house statistical primitives for Phase 6 compare.
+//! In-house statistical primitives for Phase 6.
 //!
-//! Four pure functions with uniform shape: Welch's t-test,
+//! **Compare-engine primitives**: Welch's t-test,
 //! two-proportion z-test, Benjamini–Hochberg FDR, Bonferroni. All
 //! operate via the standard-normal CDF (Abramowitz & Stegun 26.2.17
 //! rational approximation, max error ≈ 7.5e-8). p-values from Welch
 //! use a Normal approximation to the t-distribution — accurate for
-//! n ≥ 30 per cohort, which is where R6.8 lands at 10K games.
+//! n ≥ 30 per cohort, which is where R6.8 lands at 10K games. The
+//! primitives accept plain `&[f64]` / `u64` and emit a `TestOutcome`
+//! struct.
 //!
-//! The primitives are deliberately untypewrapped around game data:
-//! they accept plain `&[f64]` / `u64` and emit a `TestOutcome` struct.
-//! The compare engine (Unit 3) converts SQLite rows into these shapes
-//! and back.
+//! **Bradley–Terry ratings** (see [`bradley_terry`]): MLE strengths
+//! via Hunter (2004)'s MM iteration, with a parametric bootstrap CI
+//! on log-θ. Consumed by `playtest matchup --bradley-terry`.
+
+pub mod bradley_terry;
+
+pub use bradley_terry::{
+    BradleyTerryError, BradleyTerryInput, BradleyTerryOpts, BradleyTerryRating, bradley_terry_mle,
+};
 
 use serde::{Deserialize, Serialize};
 

@@ -28,7 +28,8 @@ pub use compare::{
     fetch_tag_totals, fetch_total_critique_responses, run_compare, write_compare_report,
 };
 pub use stats::{
-    StatsError, TestOutcome, benjamini_hochberg, bonferroni, standard_normal_cdf,
+    BradleyTerryError, BradleyTerryInput, BradleyTerryOpts, BradleyTerryRating, StatsError,
+    TestOutcome, benjamini_hochberg, bonferroni, bradley_terry_mle, standard_normal_cdf,
     two_proportion_z_test, two_sided_p_from_z, welch_t_test,
 };
 

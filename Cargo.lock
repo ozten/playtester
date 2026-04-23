@@ -2458,6 +2458,7 @@ dependencies = [
  "playtest-core",
  "playtest-log",
  "playtest-ports",
+ "rand",
  "rusqlite",
  "serde",
  "serde_json",
