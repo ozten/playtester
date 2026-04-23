@@ -14,6 +14,8 @@ A phased plan for building a Rust CLI that uses LLMs as player agents to playtes
 
 **ROI ranking convention used below:** ★ = nice to have, ★★ = clearly worth it, ★★★ = disproportionate payoff relative to build cost, ★★★★ = the unfair-advantage phases that justify the whole project.
 
+> **2026-04-23 re-ordering.** Phases 0–3 (plus Phase 2.5 HTTP remote agent) are shipped. The remaining build order is now **P5 → P6 → P4 → P8**. Phase 7 (MAP-Elites deckbuilding) is **dropped** — both shipped games (Cribbage, ShipWreck) lack a deck-construction mechanic, so the behavioral-descriptor space degenerates; re-introduce only if a deckbuilding game joins the harness. Phase numbers below are kept as-is to preserve references from shipped plans and commits.
+
 ---
 
 ## Phase 0 — Engine foundations (2–3 weeks)
@@ -134,19 +136,9 @@ A phased plan for building a Rust CLI that uses LLMs as player agents to playtes
 
 ---
 
-## Phase 7 — Quality-diversity deckbuilding (3–4 weeks)
+## Phase 7 — Quality-diversity deckbuilding — **DROPPED (2026-04-23)**
 
-**Goal.** Automatically discover decks and strategies the designer didn't think of.
-
-**Build.** **MAP-Elites** over deck space (de Mesentier Silva et al., Lee et al., Zhang et al. lineage). Behavioral descriptors: avg curve, keyword density, color/faction mix, interaction vs. proactive ratio, win-condition archetype. Grid of elite decks per behavioral cell. Optional: deep surrogate model to accelerate (phase 7.5 territory).
-
-**Insight produced.** The exploits your designers missed. The "if the meta goes here, what's the best response?" decks. Empty cells in the grid that indicate archetypes the card pool *can't* support — which is itself a design signal. This is how you find the next Skullclamp before shipping.
-
-**Implementation difficulty.** High. MAP-Elites is conceptually clean but requires careful descriptor design and a lot of compute. You'll want to parallelize across cores.
-
-**ROI.** ★★★ — Enormously valuable when it works; diminishing returns once the meta has been explored a few times. Best used intermittently rather than on every build.
-
-**Exit criteria.** On a game with a known-powerful unintended combo, MAP-Elites finds it (or something equally spicy) within a compute budget of 1M games.
+Removed from the roadmap. MAP-Elites over deck space requires a deck-construction mechanic to produce non-degenerate behavioral descriptors. Cribbage has a fixed 52-card deck; ShipWreck uses a shared wreckage draft with no construction phase. With no deckbuilding game in the harness, the phase's signal collapses. Re-introduce only if a third game crate with a deck-construction mechanic lands.
 
 ---
 
@@ -195,7 +187,7 @@ These are all "maybe, if the project is still alive and the ROI math holds up":
 | 4 | Per-persona balance insights | Games with archetype variety |
 | 5 | Subjective feedback extraction | Games where fun > optimization |
 | 6 | Closed-loop iteration tool | Active game development |
-| 7 | Automated exploit discovery | Pre-launch hardening |
+| ~~7~~ | ~~Automated exploit discovery~~ | **Dropped 2026-04-23** — no deckbuilding game to target |
 | 8 | Daily-driver UX | Sustained multi-designer teams |
 | 9 | Specialized power tools | Mature projects with specific needs |
 
