@@ -18,7 +18,8 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use playtest_cribbage::{CribbageGame, CribbageMetrics};
 use playtest_metrics::{
-    MarkdownBuilder, ingest_directory, init_schema, write_per_agent_section, write_summary_section,
+    MarkdownBuilder, ingest_directory, init_schema, write_per_agent_section,
+    write_subjective_critique_section, write_summary_section,
 };
 use playtest_registry::game_registry::{RegisteredGame, lookup as lookup_game};
 use playtest_shipwreck::{ShipWreckGame, ShipWreckMetrics};
@@ -121,6 +122,8 @@ fn build_report(
 
     write_summary_section(&mut md, conn).context("writing Summary section")?;
     write_per_agent_section(&mut md, conn).context("writing Per-agent section")?;
+    write_subjective_critique_section(&mut md, conn)
+        .context("writing Subjective critique section")?;
 
     match game {
         RegisteredGame::Cribbage(_) => {

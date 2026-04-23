@@ -13,8 +13,10 @@ use rusqlite::{Connection, Error as SqliteError};
 
 use crate::markdown::MarkdownBuilder;
 use crate::query::{
-    EndReasonBreakdown, WinnerBreakdown, agent_summaries, avg_numeric_metric, end_reason_breakdown,
-    games_count, winner_breakdown,
+    CritiqueLikertSummary, CritiqueTagByCard, CritiqueTagCount, EndReasonBreakdown,
+    WinnerBreakdown, agent_summaries, avg_numeric_metric, critique_likert_means,
+    critique_spec_versions, critique_tag_counts_by_card, critique_tag_counts_overall,
+    end_reason_breakdown, games_count, winner_breakdown,
 };
 
 /// Write the top-level **Summary** section: total games, average
@@ -170,6 +172,120 @@ fn render_end_reason_breakdown(
         ]);
     }
     md.table(&["end reason", "games", "share"], &rows);
+}
+
+/// Write the Phase 5 **Subjective critique** section.
+///
+/// Omitted entirely when both `critique_likert` and `critique_tags`
+/// are empty — a run without `--critique` produces no heading. When
+/// the data is mixed across multiple `spec_version` values, renders a
+/// warning banner so aggregate comparisons aren't silently across
+/// incompatible questionnaires.
+///
+/// Three subsections:
+/// - **Likert means**: one row per question with mean + 95% CI + n.
+/// - **Coded tags (overall)**: tag frequency histogram, descending.
+/// - **Per-card tag frequency**: one small table per `ref_card` with
+///   ≥ 3 mentions. Single-mention cards are suppressed to cut noise.
+///
+/// # Errors
+/// Propagates any `rusqlite::Error` from the critique queries.
+pub fn write_subjective_critique_section(
+    md: &mut MarkdownBuilder,
+    conn: &Connection,
+) -> Result<(), SqliteError> {
+    let likert = critique_likert_means(conn)?;
+    let tag_overall = critique_tag_counts_overall(conn)?;
+    let tag_by_card = critique_tag_counts_by_card(conn)?;
+
+    // Nothing to show — omit the entire section. Matches R5.6: no
+    // "no data" placeholder, no empty heading.
+    if likert.is_empty() && tag_overall.is_empty() {
+        return Ok(());
+    }
+
+    md.h2("Subjective critique");
+
+    // Cross-version warning.
+    let spec_versions = critique_spec_versions(conn)?;
+    if spec_versions.len() > 1 {
+        let joined = spec_versions
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        md.paragraph(&format!(
+            "**Warning:** this run mixes questionnaire specs (versions {joined}); Likert \
+             aggregates may not be comparable across them."
+        ));
+    }
+
+    if !likert.is_empty() {
+        md.h3("Likert means");
+        render_likert_means(md, &likert);
+    }
+    if !tag_overall.is_empty() {
+        md.h3("Coded tags (overall)");
+        render_tag_overall(md, &tag_overall);
+    }
+    if !tag_by_card.is_empty() {
+        md.h3("Coded tags (per card)");
+        render_tag_by_card(md, &tag_by_card);
+    }
+
+    Ok(())
+}
+
+fn render_likert_means(md: &mut MarkdownBuilder, summaries: &[CritiqueLikertSummary]) {
+    let headers = &["question", "mean", "95% CI", "n"];
+    let mut rows = Vec::with_capacity(summaries.len());
+    for s in summaries {
+        let ci = match (s.ci_lower, s.ci_upper) {
+            (Some(lo), Some(hi)) => format!("[{lo:.2}, {hi:.2}]"),
+            _ => "—".to_owned(),
+        };
+        rows.push(vec![
+            s.question.clone(),
+            format!("{:.2}", s.mean),
+            ci,
+            s.n.to_string(),
+        ]);
+    }
+    md.table(headers, &rows);
+}
+
+fn render_tag_overall(md: &mut MarkdownBuilder, counts: &[CritiqueTagCount]) {
+    let headers = &["tag", "count"];
+    let rows: Vec<Vec<String>> = counts
+        .iter()
+        .map(|c| vec![c.tag.clone(), c.count.to_string()])
+        .collect();
+    md.table(headers, &rows);
+}
+
+fn render_tag_by_card(md: &mut MarkdownBuilder, rows_in: &[CritiqueTagByCard]) {
+    // Group rows by ref_card and emit one small table per card with
+    // ≥ 3 mentions. Pre-sort is by (ref_card, count desc); walk the
+    // grouped prefix per card.
+    let mut i = 0;
+    while i < rows_in.len() {
+        let card = rows_in[i].ref_card.clone();
+        let mut group_rows: Vec<Vec<String>> = Vec::new();
+        let mut card_total: u64 = 0;
+        while i < rows_in.len() && rows_in[i].ref_card == card {
+            card_total += rows_in[i].count;
+            group_rows.push(vec![
+                rows_in[i].tag.clone(),
+                rows_in[i].count.to_string(),
+            ]);
+            i += 1;
+        }
+        if card_total < 3 {
+            continue;
+        }
+        md.paragraph(&format!("**{card}** (total mentions: {card_total})"));
+        md.table(&["tag", "count"], &group_rows);
+    }
 }
 
 /// Mean event count per agent, for the per-agent table's "avg length"

@@ -32,5 +32,7 @@ pub use registry::{
     MetricRegistry, RegistryError, ScopeEvidence, validate_definitions,
     validate_values_against_defs,
 };
-pub use reporter::{write_per_agent_section, write_summary_section};
+pub use reporter::{
+    write_per_agent_section, write_subjective_critique_section, write_summary_section,
+};
 pub use value::{MetricValue, MetricValueKind};

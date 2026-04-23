@@ -200,3 +200,155 @@ pub fn sum_count_metric(
         },
     )
 }
+
+// -----------------------------------------------------------------------
+// Phase 5 critique queries
+// -----------------------------------------------------------------------
+
+/// Per-question Likert aggregate: mean, 95% CI (normal approximation),
+/// and sample size. Populated from `critique_likert`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CritiqueLikertSummary {
+    pub question: String,
+    pub mean: f64,
+    pub n: u64,
+    /// `None` when n < 5 — too small for a meaningful CI.
+    pub ci_lower: Option<f64>,
+    pub ci_upper: Option<f64>,
+}
+
+/// Per-question Likert means + 95% CI across all ingested critiques.
+/// Sorted by question name for deterministic output.
+///
+/// SQLite's built-in functions don't include `SQRT`, so the stddev is
+/// computed in Rust from a (mean, sum-of-squares, n) triple pulled
+/// via aggregate SQL.
+///
+/// # Errors
+/// Propagates `rusqlite::Error`.
+pub fn critique_likert_means(
+    conn: &Connection,
+) -> Result<Vec<CritiqueLikertSummary>, SqliteError> {
+    let mut stmt = conn.prepare(
+        "SELECT question, AVG(score), COUNT(*), \
+                SUM(score * score) AS sum_sq, \
+                SUM(score) AS sum_score \
+         FROM critique_likert \
+         GROUP BY question \
+         ORDER BY question",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let question: String = row.get(0)?;
+        let mean: f64 = row.get(1)?;
+        let n_i: i64 = row.get(2)?;
+        let sum_sq: f64 = row.get(3)?;
+        let sum_score: f64 = row.get(4)?;
+        let n = u64::try_from(n_i).unwrap_or(0);
+        // Sample variance: (Σx² - (Σx)² / n) / (n-1).
+        // Normal-approx 95% CI: mean ± 1.96 × stddev / sqrt(n).
+        // Below n < 5 the approximation is too shaky; fall back to
+        // None so the reporter renders `—`.
+        #[allow(clippy::cast_precision_loss)]
+        let (ci_lower, ci_upper) = if n >= 5 {
+            let nf = n as f64;
+            let variance = (sum_sq - (sum_score * sum_score) / nf) / (nf - 1.0);
+            let stddev = variance.max(0.0).sqrt();
+            let half_width = 1.96 * (stddev / nf.sqrt());
+            (Some(mean - half_width), Some(mean + half_width))
+        } else {
+            (None, None)
+        };
+        Ok(CritiqueLikertSummary {
+            question,
+            mean,
+            n,
+            ci_lower,
+            ci_upper,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Row of `critique_tag_counts` overall (not per-card).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CritiqueTagCount {
+    pub tag: String,
+    pub count: u64,
+}
+
+/// Overall tag-frequency histogram across all ingested critiques,
+/// sorted by count descending, then tag ascending.
+///
+/// # Errors
+/// Propagates `rusqlite::Error`.
+pub fn critique_tag_counts_overall(
+    conn: &Connection,
+) -> Result<Vec<CritiqueTagCount>, SqliteError> {
+    let mut stmt = conn.prepare(
+        "SELECT tag, COUNT(*) AS n FROM critique_tags \
+         GROUP BY tag \
+         ORDER BY n DESC, tag ASC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let tag: String = row.get(0)?;
+        let n_i: i64 = row.get(1)?;
+        Ok(CritiqueTagCount {
+            tag,
+            count: u64::try_from(n_i).unwrap_or(0),
+        })
+    })?;
+    rows.collect()
+}
+
+/// Row of the per-card tag histogram.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CritiqueTagByCard {
+    pub ref_card: String,
+    pub tag: String,
+    pub count: u64,
+}
+
+/// Per-card tag histogram. Rows with `ref_card = ''` (the "no card
+/// blamed" sentinel) are excluded — this table is specifically for
+/// card-scoped attribution. Sorted by (ref_card ASC, count DESC).
+///
+/// # Errors
+/// Propagates `rusqlite::Error`.
+pub fn critique_tag_counts_by_card(
+    conn: &Connection,
+) -> Result<Vec<CritiqueTagByCard>, SqliteError> {
+    let mut stmt = conn.prepare(
+        "SELECT ref_card, tag, COUNT(*) AS n FROM critique_tags \
+         WHERE ref_card != '' \
+         GROUP BY ref_card, tag \
+         ORDER BY ref_card ASC, n DESC, tag ASC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let ref_card: String = row.get(0)?;
+        let tag: String = row.get(1)?;
+        let n_i: i64 = row.get(2)?;
+        Ok(CritiqueTagByCard {
+            ref_card,
+            tag,
+            count: u64::try_from(n_i).unwrap_or(0),
+        })
+    })?;
+    rows.collect()
+}
+
+/// Distinct `spec_version` values present in `critique_likert`. The
+/// reporter uses `.len() > 1` as the signal to render a
+/// cross-version warning banner.
+///
+/// # Errors
+/// Propagates `rusqlite::Error`.
+pub fn critique_spec_versions(conn: &Connection) -> Result<Vec<u16>, SqliteError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT spec_version FROM critique_likert ORDER BY spec_version",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let v: i64 = row.get(0)?;
+        Ok(u16::try_from(v).unwrap_or(0))
+    })?;
+    rows.collect()
+}
