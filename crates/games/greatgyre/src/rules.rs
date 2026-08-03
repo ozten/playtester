@@ -63,12 +63,15 @@ impl Game for GreatGyreGame {
     type PublicView = GreatGyrePublicView;
     type Config = GreatGyreConfig;
 
-    fn initial_state(&self, _seed: u64, cfg: &GreatGyreConfig) -> GameState {
-        // No randomness is used building the pre-draft state (see
-        // `setup.rs`); the seed only matters once `resolve_chance`
-        // runs the post-draft shuffle, which the harness seeds
-        // independently via the `Rng` port.
-        crate::setup::initial_state(cfg)
+    fn initial_state(&self, seed: u64, cfg: &GreatGyreConfig) -> GameState {
+        // No player-visible shuffling happens building the pre-draft
+        // state (see `setup.rs`) — the post-draft shuffle is deferred
+        // to `resolve_chance`, which the harness seeds independently
+        // via the `Rng` port — but `seed` *does* drive `build_catalog`'s
+        // per-game card-id permutation (see `crate::pool`'s doc
+        // comment), so it must be threaded through here rather than
+        // ignored.
+        crate::setup::initial_state(seed, cfg)
     }
 
     fn next_actor(&self, state: &GameState) -> Actor {

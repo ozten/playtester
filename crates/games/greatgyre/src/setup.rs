@@ -30,13 +30,19 @@ use crate::config::GreatGyreConfig;
 use crate::pool::build_catalog;
 use crate::state::{GameState, Phase, PlayerState};
 
-/// Build the pre-draft initial state. No randomness is used here —
-/// the draft itself is a sequence of visible player choices, and the
-/// only genuinely random step (shuffling draft leftovers into the Deep
-/// Sea Deck) is deferred to `resolve_chance`.
+/// Build the pre-draft initial state. `seed` drives no in-game
+/// shuffling here — the draft itself is a sequence of visible player
+/// choices, and the only genuinely random step (shuffling draft
+/// leftovers into the Deep Sea Deck) is deferred to `resolve_chance` —
+/// but it *does* drive `build_catalog`'s per-game id→kind permutation
+/// (see `crate::pool`'s doc comment), which must happen here, at
+/// setup, so replay-from-log (`initial_state(seed, cfg)` folded with
+/// the log's events) reconstructs it byte-identically. `seed` is
+/// stashed on the returned state so `determinize` can rebuild the same
+/// permuted universe later.
 #[must_use]
-pub fn initial_state(cfg: &GreatGyreConfig) -> GameState {
-    let catalog = build_catalog(cfg.num_players);
+pub fn initial_state(seed: u64, cfg: &GreatGyreConfig) -> GameState {
+    let catalog = build_catalog(cfg.num_players, seed);
 
     let players: Vec<PlayerState> = catalog
         .raft_pairs
@@ -46,6 +52,7 @@ pub fn initial_state(cfg: &GreatGyreConfig) -> GameState {
 
     GameState {
         config: *cfg,
+        id_permutation_seed: seed,
         players,
         undrafted_survivors: catalog.survivors,
         pending_shuffle_pool: catalog.shuffle_pool,

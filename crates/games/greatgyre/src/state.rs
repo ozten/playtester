@@ -245,6 +245,15 @@ impl PlayerState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameState {
     pub config: GreatGyreConfig,
+    /// The `seed` `Game::initial_state` was called with, carried
+    /// forward so `determinize` can rebuild the *same* permuted
+    /// card-id universe `crate::pool::build_catalog` assigned at
+    /// setup, instead of re-deriving a (potentially different) one.
+    /// Never mutated after `initial_state` — see `crate::pool`'s doc
+    /// comment for why card ids are permuted per seed at all (closing
+    /// a fixed id→kind "codebook" that would otherwise leak hidden
+    /// card identity).
+    pub id_permutation_seed: u64,
     /// One `PlayerState` per seat, indexed by `PlayerId`.
     pub players: Vec<PlayerState>,
 

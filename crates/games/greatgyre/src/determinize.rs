@@ -13,7 +13,13 @@
 //! exact same function `setup::initial_state` calls. That means the
 //! "universe" of cards for a `num_players`-seat game can be
 //! reconstructed byte-for-byte (same ids, same kinds) just by calling
-//! `build_catalog(num_players)` again; no need to walk an event log.
+//! `build_catalog(num_players, seed)` again with the *same* `seed`
+//! `initial_state` used — no need to walk an event log. `seed` here is
+//! `GameState::id_permutation_seed`, not re-derived: `build_catalog`
+//! permutes ids per `(num_players, seed)` (see `crate::pool`'s doc
+//! comment), so calling it with a different or default seed would
+//! silently rebuild a *different* id→kind mapping than the one the
+//! real game state was built from.
 //!
 //! From `public_view`'s redaction rules (see that module's doc
 //! comment), exactly three kinds of zone are hidden from an observer
@@ -68,7 +74,7 @@ pub(crate) fn determinize(state: &GameState, observer: PlayerId, rng: &mut dyn R
     let observer_idx = observer as usize;
 
     let num_players = u8::try_from(state.players.len()).expect("player count fits in u8");
-    let universe = full_universe(num_players);
+    let universe = full_universe(num_players, state.id_permutation_seed);
     let seen = publicly_known_ids(state, observer_idx);
 
     // --- Derive the hidden pool + shuffle it ------------------------
@@ -81,10 +87,11 @@ pub(crate) fn determinize(state: &GameState, observer: PlayerId, rng: &mut dyn R
 }
 
 /// Every physical card in a `num_players`-seat game, rebuilt via the
-/// same catalog function `setup::initial_state` uses — same
-/// `CardInstanceId`s, guaranteed.
-fn full_universe(num_players: u8) -> Vec<Card> {
-    let catalog = crate::pool::build_catalog(num_players);
+/// same catalog function `setup::initial_state` uses, with the *same*
+/// `seed` (`GameState::id_permutation_seed`) — same `CardInstanceId`s
+/// mapped to the same kinds, guaranteed.
+fn full_universe(num_players: u8, seed: u64) -> Vec<Card> {
+    let catalog = crate::pool::build_catalog(num_players, seed);
     let mut universe: Vec<Card> = Vec::new();
     for (left, right) in &catalog.raft_pairs {
         universe.push(*left);

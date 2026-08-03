@@ -131,7 +131,7 @@ mod tests {
 
     fn state_for_scoring(n: u8) -> GameState {
         let cfg = GreatGyreConfig::new(n).unwrap();
-        crate::setup::initial_state(&cfg)
+        crate::setup::initial_state(1, &cfg)
     }
 
     #[test]

@@ -13,11 +13,11 @@
 //! accidentally-identity `determinize` would pass the invariant
 //! property trivially).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use playtest_adapters::StubRng;
 use playtest_core::{Actor, Game};
-use playtest_greatgyre::{Face, GameState, GreatGyreConfig, GreatGyreGame};
+use playtest_greatgyre::{CardInstanceId, CardKind, Face, GameState, GreatGyreConfig, GreatGyreGame};
 use playtest_ports::Rng;
 
 fn pick(rng: &mut StubRng, n: usize) -> usize {
@@ -240,6 +240,128 @@ fn determinize_produces_a_full_valid_card_universe_with_no_duplicates() {
                 ids.len(),
                 "n={n} observer={observer}: duplicate CardInstanceId after determinize"
             );
+        }
+    }
+}
+
+/// Every card in `state` (recursing through every zone, exactly like
+/// `determinize_produces_a_full_valid_card_universe_with_no_duplicates`),
+/// keyed by id.
+fn all_cards_by_id(state: &GameState) -> HashMap<CardInstanceId, CardKind> {
+    let mut out = HashMap::new();
+    let mut mark = |id: CardInstanceId, kind: CardKind| {
+        if let Some(prev) = out.insert(id, kind) {
+            assert_eq!(prev, kind, "id {id:?} maps to two different kinds within one state");
+        }
+    };
+    for p in &state.players {
+        mark(p.raft_left.id, p.raft_left.kind);
+        mark(p.raft_right.id, p.raft_right.kind);
+        for c in &p.hand {
+            mark(c.id, c.kind);
+        }
+        for cc in &p.current {
+            mark(cc.card.id, cc.card.kind);
+        }
+        for c in &p.built_extensions {
+            mark(c.id, c.kind);
+        }
+        for pc in &p.placed {
+            mark(pc.card.id, pc.card.kind);
+        }
+        for c in &p.blocked_by_walrus {
+            mark(c.id, c.kind);
+        }
+    }
+    for c in &state.deep_sea_deck {
+        mark(c.id, c.kind);
+    }
+    for c in &state.final_round_deck {
+        mark(c.id, c.kind);
+    }
+    for c in &state.event_deck {
+        mark(c.id, c.kind);
+    }
+    for c in &state.discard_pile {
+        mark(c.id, c.kind);
+    }
+    for c in &state.extension_pile {
+        mark(c.id, c.kind);
+    }
+    for c in &state.undrafted_survivors {
+        mark(c.id, c.kind);
+    }
+    for c in &state.pending_shuffle_pool {
+        mark(c.id, c.kind);
+    }
+    for c in &state.pending_event_pool {
+        mark(c.id, c.kind);
+    }
+    for pd in &state.pending_decisions {
+        if let playtest_greatgyre::PendingDecisionKind::EventReaction {
+            held_card: Some(card),
+            ..
+        } = &pd.kind
+        {
+            mark(card.id, card.kind);
+        }
+    }
+    out
+}
+
+#[test]
+fn determinize_preserves_the_seeded_id_to_kind_permutation() {
+    // The codebook-leak fix (Unit: permute card instance ids per game
+    // seed) requires `determinize` to reconstruct the *same* permuted
+    // universe `build_catalog` assigned at `initial_state` — not a
+    // fresh, differently-permuted one. If it used the wrong seed (or
+    // fell back to catalog order), the *hidden* cards it resamples
+    // would come back with the wrong kind for their id relative to the
+    // reference catalog below, even though every id would still be
+    // present exactly once (a bug the duplicate/conservation tests
+    // above wouldn't catch).
+    let game = GreatGyreGame::new();
+    for n in 2..=4u8 {
+        let seed = 900_000u64.wrapping_add(u64::from(n));
+        let state = mid_game_state(seed, n, 90);
+        assert_eq!(
+            state.id_permutation_seed, seed,
+            "n={n}: GameState didn't carry the seed initial_state was called with"
+        );
+        let reference = playtest_greatgyre::pool::build_catalog(n, seed);
+        let mut reference_map = HashMap::new();
+        for (l, r) in &reference.raft_pairs {
+            reference_map.insert(l.id, l.kind);
+            reference_map.insert(r.id, r.kind);
+        }
+        for c in reference
+            .survivors
+            .iter()
+            .chain(reference.shuffle_pool.iter())
+            .chain(reference.events.iter())
+            .chain(reference.extensions.iter())
+        {
+            reference_map.insert(c.id, c.kind);
+        }
+
+        for observer in 0..n {
+            let mut rng = StubRng::seeded(u64::from(observer).wrapping_add(4321));
+            let out = game.determinize(&state, observer, &mut rng);
+            let observed = all_cards_by_id(&out);
+            assert_eq!(
+                observed.len(),
+                reference_map.len(),
+                "n={n} observer={observer}: card count mismatch vs. reference catalog"
+            );
+            for (id, kind) in &observed {
+                assert_eq!(
+                    reference_map.get(id),
+                    Some(kind),
+                    "n={n} observer={observer}: id {id:?} has kind {kind:?} after determinize, \
+                     which doesn't match the seed-{seed} reference catalog — the permuted \
+                     mapping wasn't reconstructed correctly"
+                );
+            }
         }
     }
 }
