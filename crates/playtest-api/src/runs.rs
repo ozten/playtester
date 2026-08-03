@@ -15,8 +15,9 @@ pub struct CreateRunRequest {
     /// Registered game id (e.g. `"cribbage"`).
     pub game: String,
 
-    /// Ordered list of agent kind ids, one per seat. Length must
-    /// match the game's required player count.
+    /// Ordered list of agent kind ids, one per seat. Length must fall
+    /// within the target game's declared player-count range (e.g.
+    /// exactly 2 for Cribbage, 2-4 for ShipWreck).
     pub agents: Vec<String>,
 
     /// How many games to play in this run. Must be >= 1.

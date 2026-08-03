@@ -176,6 +176,91 @@ async fn five_agent_cribbage_returns_400() {
 }
 
 #[tokio::test]
+async fn three_agent_cribbage_returns_400() {
+    let server = SpawnedServer::start().await;
+    let client = reqwest::Client::new();
+
+    let req = json!({
+        "game": "cribbage",
+        "agents": ["random", "random", "random"],
+        "games_count": 1,
+        "seed": 1,
+    });
+
+    let resp = client
+        .post(format!("{}/api/runs", server.base_url))
+        .json(&req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+    let body: ApiResponse<()> = resp.json().await.unwrap();
+    assert!(body.errors.iter().any(|e| e.code == ApiErrorCode::InvalidConfig));
+
+    server.shutdown();
+}
+
+#[tokio::test]
+async fn one_agent_shipwreck_returns_400() {
+    let server = SpawnedServer::start().await;
+    let client = reqwest::Client::new();
+
+    let req = json!({
+        "game": "shipwreck",
+        "agents": ["random"],
+        "games_count": 1,
+        "seed": 1,
+    });
+
+    let resp = client
+        .post(format!("{}/api/runs", server.base_url))
+        .json(&req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+    let body: ApiResponse<()> = resp.json().await.unwrap();
+    assert!(body.errors.iter().any(|e| e.code == ApiErrorCode::InvalidConfig));
+
+    server.shutdown();
+}
+
+#[tokio::test]
+async fn four_agent_shipwreck_run_is_accepted() {
+    let server = SpawnedServer::start().await;
+    let client = reqwest::Client::new();
+
+    let req = CreateRunRequest {
+        game: "shipwreck".into(),
+        agents: vec![
+            "random".into(),
+            "random".into(),
+            "random".into(),
+            "random".into(),
+        ],
+        games_count: 1,
+        seed: Some(7),
+        config: None,
+    };
+
+    let post: ApiResponse<RunSummary> = client
+        .post(format!("{}/api/runs", server.base_url))
+        .json(&req)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(post.errors.is_empty(), "unexpected errors: {:?}", post.errors);
+    let run = post.data.expect("data");
+    assert_eq!(run.game, "shipwreck");
+    assert_eq!(run.agents.len(), 4);
+
+    server.shutdown();
+}
+
+#[tokio::test]
 async fn reports_endpoints_are_stubbed_as_501() {
     let server = SpawnedServer::start().await;
     let client = reqwest::Client::new();

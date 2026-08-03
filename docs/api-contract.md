@@ -211,8 +211,10 @@ Example request:
 ```
 
 - `game` — must be an `id` from `/api/games-registry`.
-- `agents` — length must match the game's player count (2 for
-  Cribbage in the current phase).
+- `agents` — length must fall within the game's declared player-count
+  range (`playtest_registry::game_registry::player_count_range`):
+  exactly 2 for Cribbage, 2–4 for ShipWreck. Requests outside that
+  range are rejected with `InvalidConfig`.
 - `games_count` — positive integer.
 - `seed` — optional. Omit to let the server pick one.
 - `config` — optional, game-specific blob.

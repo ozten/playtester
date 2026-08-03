@@ -174,7 +174,7 @@
         "description": "Request body for `POST /runs`.\n\n`config` is carried as untyped JSON so this crate stays game-agnostic; the server parses it against the named game's schema before accepting the run.",
         "properties": {
           "agents": {
-            "description": "Ordered list of agent kind ids, one per seat. Length must match the game's required player count.",
+            "description": "Ordered list of agent kind ids, one per seat. Length must fall within the target game's declared player-count range (e.g. exactly 2 for Cribbage, 2-4 for ShipWreck).",
             "items": {
               "type": "string"
             },

@@ -21,7 +21,7 @@ use playtest_api::{
     ApiError, ApiErrorCode, ApiResponse, CreateRunRequest, RunStatus, RunSummary,
 };
 use playtest_registry::agent_registry::{KNOWN_AGENTS, is_known_agent, split_agent_spec};
-use playtest_registry::game_registry::{KNOWN_GAMES, lookup as lookup_game};
+use playtest_registry::game_registry::{KNOWN_GAMES, lookup as lookup_game, player_count_range};
 use uuid::Uuid;
 
 use crate::routes::{ApiResult, api_error};
@@ -76,16 +76,25 @@ async fn create_run(
         }
     }
 
-    // Enforce 2-player constraint at the route boundary (same check
-    // the CLI's `play` command makes).
-    if req.agents.len() != 2 {
+    // Enforce the game's declared player-count range at the route
+    // boundary (same check the CLI's `play` command makes — see
+    // `playtest-cli/src/commands/play.rs`). Each game declares its own
+    // range via `player_count_range`; Cribbage is 2..=2, ShipWreck is
+    // 2..=4.
+    let (min_players, max_players) = player_count_range(&game);
+    if req.agents.len() < min_players || req.agents.len() > max_players {
         return Err(api_error(ApiError::with_details(
             ApiErrorCode::InvalidConfig,
             format!(
-                "expected 2 agents (2-player only for current phase), got {}",
+                "game `{}` expects {min_players}..={max_players} agents, got {}",
+                req.game,
                 req.agents.len()
             ),
-            serde_json::json!({"agents_count": req.agents.len()}),
+            serde_json::json!({
+                "agents_count": req.agents.len(),
+                "min_players": min_players,
+                "max_players": max_players,
+            }),
         )));
     }
 
