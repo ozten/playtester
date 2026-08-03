@@ -50,8 +50,7 @@ Design decisions already made (do not relitigate):
   food confirm with hungry/stand choices, simultaneous pass, first-player
   rotation, final-round trigger + hope scoring + `end_game`. Small
   random-self-play soak (1k games, no panics, all games terminate).
-  Commit: `<pending>` (this unit's own commit — see `git log` for the
-  actual hash of "feat(greatgyre): U2 — five-phase turn machine, ...").
+  Commit: `5d7f5f7`.
  
 - [ ] **U3 — abilities & modifiers.** Stat aggregation from raft
   (add/draw/action/hand-size/food), Purser/First Mate/Athlete/Millionaire/
