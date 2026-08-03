@@ -1,0 +1,23 @@
+[package]
+name = "playtest-greatgyre"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+playtest-core.workspace = true
+playtest-ports.workspace = true
+rand_chacha.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+playtest-adapters.workspace = true
+playtest-agents.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }
