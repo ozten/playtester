@@ -30,6 +30,7 @@ use playtest_agents::{
 };
 use playtest_core::{Agent, Game, PlayerId};
 use playtest_cribbage::{CribbageGame, cribbage_eval};
+use playtest_greatgyre::{GreatGyreGame, greatgyre_eval};
 use playtest_ports::LlmClient;
 use playtest_shipwreck::{ShipWreckGame, shipwreck_eval};
 use serde::Serialize;
@@ -55,6 +56,8 @@ pub const KNOWN_AGENTS: &[&str] = &[
     "greedy-shipwreck",
     "heuristic-shipwreck",
     "ismcts-shipwreck",
+    "greedy-greatgyre",
+    "heuristic-greatgyre",
 ];
 
 /// Default ISMCTS budget for agents built via [`build_cribbage_agent`]
@@ -577,6 +580,59 @@ pub fn build_shipwreck_agent_with_critic(
     }
 }
 
+/// Build an agent typed for `GreatGyreGame`.
+///
+/// # Errors
+/// Returns an error if `spec` doesn't match a known agent or is a
+/// Cribbage-/ShipWreck-specific kind. Returns an error for
+/// `http-remote` when `ctx.remote_transport` is `None`.
+pub fn build_greatgyre_agent(
+    spec: &str,
+    ctx: &AgentBuildCtx,
+) -> Result<Box<dyn Agent<GreatGyreGame>>> {
+    build_greatgyre_agent_with_critic(spec, ctx).map(BuiltAgent::into_agent)
+}
+
+/// Phase-5-shaped entry point: build a Great Gyre agent and return
+/// both the gameplay handle and the optional post-game-critique
+/// handle. `llm`/`stdio` route through the shared generic path with no
+/// game-specific rules text (Great Gyre has no `rules_for_llm.md` —
+/// out of scope for Unit 5, which only requires `random`/`http-remote`/
+/// `greedy-greatgyre`/`heuristic-greatgyre`); `critic` is `None` for
+/// every kind here as a result.
+///
+/// # Errors
+/// Same as [`build_greatgyre_agent`].
+pub fn build_greatgyre_agent_with_critic(
+    spec: &str,
+    ctx: &AgentBuildCtx,
+) -> Result<BuiltAgent<GreatGyreGame>> {
+    let (name, _params) = split_agent_spec(spec);
+    match name {
+        "random" | "http-remote" | "llm" | "stdio" => {
+            build_agent_with_game_metadata::<GreatGyreGame>(name, ctx, "", GreatGyreGame::NAME)
+        }
+        "greedy-greatgyre" => Ok(BuiltAgent::without_critic(Box::new(
+            GreedyAgent::<GreatGyreGame>::new(ctx.player, greatgyre_eval),
+        ))),
+        "heuristic-greatgyre" => {
+            let rng = ProductionRng::from_seed(ctx.seed);
+            Ok(BuiltAgent::without_critic(Box::new(
+                HeuristicAgent::<GreatGyreGame, _>::with_temperature(
+                    ctx.player,
+                    greatgyre_eval,
+                    rng,
+                    DEFAULT_TEMPERATURE,
+                ),
+            )))
+        }
+        other => bail!(
+            "unknown agent: {other} (for greatgyre); known: {}",
+            KNOWN_AGENTS.join(", ")
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn build_http_remote_with_transport_succeeds_for_both_games() {
+    fn build_http_remote_with_transport_succeeds_for_all_games() {
         let ctx = AgentBuildCtx {
             seed: 42,
             player: 0,
@@ -639,6 +695,32 @@ mod tests {
         };
         build_cribbage_agent("http-remote", &ctx).expect("cribbage http-remote");
         build_shipwreck_agent("http-remote", &ctx).expect("shipwreck http-remote");
+        build_greatgyre_agent("http-remote", &ctx).expect("greatgyre http-remote");
+    }
+
+    #[test]
+    fn build_greatgyre_random_and_search_agents_succeed() {
+        let ctx = AgentBuildCtx::cli(7, 0);
+        build_greatgyre_agent("random", &ctx).expect("random");
+        build_greatgyre_agent("greedy-greatgyre", &ctx).expect("greedy-greatgyre");
+        build_greatgyre_agent("heuristic-greatgyre", &ctx).expect("heuristic-greatgyre");
+    }
+
+    #[test]
+    fn build_greatgyre_rejects_other_games_per_game_kinds() {
+        let ctx = AgentBuildCtx::cli(7, 0);
+        let err = build_greatgyre_agent("greedy-shipwreck", &ctx)
+            .err()
+            .expect("shipwreck-specific kind rejected on the greatgyre path");
+        assert!(err.to_string().contains("unknown agent"));
+    }
+
+    #[test]
+    fn greatgyre_agents_are_in_known_agents() {
+        assert!(KNOWN_AGENTS.contains(&"greedy-greatgyre"));
+        assert!(KNOWN_AGENTS.contains(&"heuristic-greatgyre"));
+        assert!(is_known_agent("greedy-greatgyre"));
+        assert!(is_known_agent("heuristic-greatgyre"));
     }
 
     #[test]

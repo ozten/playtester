@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args as ClapArgs;
 use playtest_cribbage::{CribbageConfig, CribbageGame};
+use playtest_greatgyre::{GreatGyreConfig, GreatGyreGame};
 use playtest_log::LogHeader;
 use playtest_shipwreck::{ShipWreckConfig, ShipWreckGame};
 
@@ -33,6 +34,7 @@ pub fn run(args: &ReplayArgs) -> Result<()> {
     match game_name.as_str() {
         "cribbage" => replay_cribbage(&args.path, args.tick),
         "shipwreck" => replay_shipwreck(&args.path, args.tick),
+        "greatgyre" => replay_greatgyre(&args.path, args.tick),
         other => bail!("unknown game in log header: {other}"),
     }
 }
@@ -106,6 +108,51 @@ fn replay_shipwreck(path: &std::path::Path, tick_filter: Option<u64>) -> Result<
         .with_context(|| format!("log header has invalid agent count: {n}"))?;
     let game = ShipWreckGame::new();
     let replayed = playtest_log::replay::<ShipWreckGame>(&game, ShipWreckGame::NAME, &cfg, path)?;
+
+    print_header(&replayed.header, replayed.snapshots.len());
+    if let Some(t) = tick_filter {
+        if t == 0 {
+            bail!("tick 0 is the initial state before any event; pass a tick 1..=N");
+        }
+        let idx = usize::try_from(t - 1).map_err(|_| anyhow!("tick {t} too large to index"))?;
+        let snap = replayed.snapshots.get(idx).ok_or_else(|| {
+            anyhow!(
+                "tick {t} out of range (log has {} ticks)",
+                replayed.snapshots.len()
+            )
+        })?;
+        println!("--- state at tick {t} ---");
+        println!("{snap:#?}");
+    } else {
+        for (i, snap) in replayed.snapshots.iter().enumerate() {
+            println!("--- tick {} ---", i + 1);
+            println!("{snap:#?}");
+        }
+    }
+
+    if let Some(result) = replayed.result {
+        println!("--- final ---");
+        println!(
+            "winner: {:?} reason: {:?} scores: {:?}",
+            result.winner, result.reason, result.scores
+        );
+    } else {
+        println!("--- log truncated (no final record) ---");
+    }
+    Ok(())
+}
+
+fn replay_greatgyre(path: &std::path::Path, tick_filter: Option<u64>) -> Result<()> {
+    // Same shape as `replay_shipwreck`: Great Gyre's config is also
+    // driven by the agent count, serialized into the header's
+    // `config_hash`.
+    let agent_count = peek_agent_count(path)?;
+    let n = u8::try_from(agent_count)
+        .map_err(|_| anyhow!("log header has too many agents: {agent_count}"))?;
+    let cfg = GreatGyreConfig::new(n)
+        .with_context(|| format!("log header has invalid agent count: {n}"))?;
+    let game = GreatGyreGame::new();
+    let replayed = playtest_log::replay::<GreatGyreGame>(&game, GreatGyreGame::NAME, &cfg, path)?;
 
     print_header(&replayed.header, replayed.snapshots.len());
     if let Some(t) = tick_filter {

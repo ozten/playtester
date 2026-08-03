@@ -248,9 +248,11 @@ pub struct GameState {
     /// One `PlayerState` per seat, indexed by `PlayerId`.
     pub players: Vec<PlayerState>,
 
-    /// Survivors not yet drafted. Consumed during `Phase::SurvivorDraft`;
-    /// any leftovers are folded into the shuffle at
-    /// `Phase::AwaitingPostDraftShuffle`.
+    /// Survivors not yet drafted. Shrinks during `Phase::SurvivorDraft`
+    /// as each seat picks one; any leftovers are folded into the
+    /// shuffle pool at `Phase::AwaitingPostDraftShuffle`. Empty after
+    /// `Event::PostDraftSetup` applies (same as `pending_shuffle_pool`/
+    /// `pending_event_pool` below).
     pub undrafted_survivors: Vec<Card>,
     /// Modifications + Dead Fish + resources, awaiting the post-draft
     /// shuffle. Empty after `Event::PostDraftSetup` applies.

@@ -75,6 +75,11 @@ pub fn run(args: &ReportArgs) -> Result<()> {
             &ShipWreckMetrics,
         )
         .with_context(|| format!("ingesting {}", args.games.display()))?,
+        RegisteredGame::GreatGyre(_) => anyhow::bail!(
+            "playtest report --game greatgyre: no MetricRegistry/report sections implemented \
+             yet for Great Gyre (out of scope for the Unit 5 views/registry/agents work — use \
+             `playtest play`/`playtest replay` for greatgyre instead)"
+        ),
     };
 
     let report_md = build_report(&game, &conn, &ingest_report)?;
@@ -140,6 +145,10 @@ fn build_report(
             playtest_shipwreck::report::write_per_player_section(&mut md, conn)
                 .context("writing ShipWreck per-player section")?;
         }
+        // Unreachable in practice: `run()` bails during ingestion
+        // before `build_report` is ever called for GreatGyre. The
+        // match still needs to be exhaustive over `RegisteredGame`.
+        RegisteredGame::GreatGyre(_) => {}
     }
 
     Ok(md.into_string())
@@ -149,5 +158,6 @@ fn game_name(game: &RegisteredGame) -> &'static str {
     match game {
         RegisteredGame::Cribbage(_) => CribbageGame::NAME,
         RegisteredGame::ShipWreck(_) => ShipWreckGame::NAME,
+        RegisteredGame::GreatGyre(_) => playtest_greatgyre::GreatGyreGame::NAME,
     }
 }

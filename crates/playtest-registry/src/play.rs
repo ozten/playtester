@@ -17,6 +17,7 @@ use playtest_agents::{
 };
 use playtest_core::{Agent, Game, GameLoop};
 use playtest_cribbage::{CribbageConfig, CribbageGame, Event as CribbageEvent};
+use playtest_greatgyre::{Event as GreatGyreEvent, GreatGyreConfig, GreatGyreGame};
 use playtest_log::{EventLogWriter, LogHeader, LogRecord, SCHEMA_VERSION, compute_config_hash};
 use playtest_ports::{Clock, GameEventSink, LlmClient};
 use playtest_shipwreck::{
@@ -24,8 +25,8 @@ use playtest_shipwreck::{
 };
 
 use crate::agent_registry::{
-    AgentBuildCtx, BuiltAgent, build_cribbage_agent_with_critic, build_shipwreck_agent_with_critic,
-    validate_llm_provider_consistency,
+    AgentBuildCtx, BuiltAgent, build_cribbage_agent_with_critic, build_greatgyre_agent_with_critic,
+    build_shipwreck_agent_with_critic, validate_llm_provider_consistency,
 };
 use crate::game_registry::RegisteredGame;
 
@@ -183,6 +184,9 @@ pub fn run_single_game_into_sink_with_extras(
         RegisteredGame::Cribbage(g) => run_cribbage_into_sink(*g, agent_names, seed, fixed_time, extras, sink),
         RegisteredGame::ShipWreck(g) => {
             run_shipwreck_into_sink(*g, agent_names, seed, fixed_time, extras, sink)
+        }
+        RegisteredGame::GreatGyre(g) => {
+            run_greatgyre_into_sink(*g, agent_names, seed, fixed_time, extras, sink)
         }
     }
 }
@@ -405,6 +409,103 @@ fn run_shipwreck_into_sink(
     };
 
     let final_line = serde_json::to_string(&LogRecord::<ShipWreckEvent>::Final {
+        winner: result.winner,
+        reason: result.reason,
+        scores: result.scores,
+        finished_at,
+    })?;
+    sink.emit(&final_line)?;
+    sink.flush()?;
+    Ok(())
+}
+
+fn run_greatgyre_into_sink(
+    game: GreatGyreGame,
+    agent_names: &[String],
+    seed: u64,
+    fixed_time: Option<u64>,
+    extras: &RunExtras<'_>,
+    sink: &mut dyn GameEventSink,
+) -> Result<()> {
+    // Great Gyre's config is driven by the agent count, same as
+    // ShipWreck — the registry validates the count is in range before
+    // we get here.
+    let n = u8::try_from(agent_names.len()).expect("agent count fits in u8");
+    let cfg = GreatGyreConfig::new(n)
+        .expect("agent count validated against registry player range before dispatch");
+
+    let built: Vec<BuiltAgent<GreatGyreGame>> = agent_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let ctx = build_ctx_for_seat(i, seed, extras);
+            build_greatgyre_agent_with_critic(name, &ctx)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let (mut agents, critics): (AgentSlots<GreatGyreGame>, CritiqueSlots<GreatGyreGame>) =
+        built.into_iter().map(|b| (b.agent, b.critic)).unzip();
+
+    let started_at = if let Some(t) = fixed_time {
+        t
+    } else {
+        ProductionClock::new().now()
+    };
+
+    let header = LogHeader {
+        schema: SCHEMA_VERSION,
+        game: GreatGyreGame::NAME.to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        seed,
+        agents: agent_names.to_vec(),
+        started_at,
+        config_hash: compute_config_hash(&cfg)?,
+    };
+
+    {
+        let mut writer: EventLogWriter<GreatGyreEvent> = EventLogWriter::new(sink);
+        writer.write_header(&header)?;
+    }
+
+    let mut loop_ = GameLoop::new(&game, game.initial_state(seed, &cfg));
+    let mut chance_rng = ProductionRng::from_seed(seed);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    let result = rt.block_on(loop_.run(agents.as_mut_slice(), &mut chance_rng, sink))?;
+
+    // Phase 5: post-game critique (see the identical block in
+    // `run_cribbage_into_sink` for invariants). No `llm` seats are
+    // wired up for Great Gyre yet (Unit 5 scope), so `critics` is
+    // always all-`None` here — this block is a no-op today and kept
+    // only so the pattern stays uniform across games.
+    if let Some(deps) = extras.llm_deps
+        && let (Some(spec), Some(sidecar)) =
+            (deps.critique_spec.as_ref(), deps.critique_sidecar.as_ref())
+    {
+        let final_state = loop_.state();
+        for (seat, critic_opt) in critics.iter().enumerate() {
+            if let Some(critic) = critic_opt {
+                let seat_id = u8::try_from(seat).expect("seat fits in u8");
+                let view = game.public_view(final_state, seat_id);
+                if let Err(e) = rt.block_on(critic.post_game_critique(
+                    &view, &result, spec, sidecar, None,
+                )) {
+                    eprintln!("post-game critique failed for seat {seat}: {e}");
+                }
+            }
+        }
+    }
+
+    let finished_at = if let Some(t) = fixed_time {
+        t
+    } else {
+        ProductionClock::new().now()
+    };
+
+    let final_line = serde_json::to_string(&LogRecord::<GreatGyreEvent>::Final {
         winner: result.winner,
         reason: result.reason,
         scores: result.scores,

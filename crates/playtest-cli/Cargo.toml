@@ -22,6 +22,7 @@ playtest-log.workspace = true
 playtest-metrics.workspace = true
 playtest-cribbage.workspace = true
 playtest-shipwreck.workspace = true
+playtest-greatgyre.workspace = true
 playtest-registry.workspace = true
 playtest-server.workspace = true
 anyhow.workspace = true

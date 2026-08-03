@@ -435,6 +435,13 @@ fn rules_text_for_game(game: &RegisteredGame) -> &'static str {
         RegisteredGame::ShipWreck(_) => {
             include_str!("../../../games/shipwreck/rules_for_llm.md")
         }
+        // Great Gyre has no `rules_for_llm.md` yet — Unit 5 only wires
+        // up `random`/`http-remote`/`greedy-greatgyre`/
+        // `heuristic-greatgyre`; `llm`/`stdio` seats route through the
+        // shared generic path with empty rules text (see
+        // `agent_registry::build_greatgyre_agent_with_critic`'s doc
+        // comment) rather than failing to compile here.
+        RegisteredGame::GreatGyre(_) => "",
     }
 }
 
@@ -442,5 +449,6 @@ fn game_name_for(game: &RegisteredGame) -> &'static str {
     match game {
         RegisteredGame::Cribbage(_) => "cribbage",
         RegisteredGame::ShipWreck(_) => "shipwreck",
+        RegisteredGame::GreatGyre(_) => "greatgyre",
     }
 }

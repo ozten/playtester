@@ -20,8 +20,10 @@ use clap::Args as ClapArgs;
 use playtest_adapters::{ProductionRng, StubGameEventSink};
 use playtest_core::{Agent, Game, GameLoop};
 use playtest_cribbage::{CribbageConfig, CribbageGame};
+use playtest_greatgyre::{GreatGyreConfig, GreatGyreGame};
 use playtest_registry::agent_registry::{
-    AgentBuildCtx, build_cribbage_agent, build_shipwreck_agent, is_known_agent,
+    AgentBuildCtx, build_cribbage_agent, build_greatgyre_agent, build_shipwreck_agent,
+    is_known_agent,
 };
 use playtest_registry::game_registry::{
     RegisteredGame, lookup as lookup_game, player_count_range,
@@ -222,6 +224,21 @@ async fn play_one_game(
                 .run(agents.as_mut_slice(), &mut chance_rng, &mut sink)
                 .await
                 .map_err(|e| anyhow::anyhow!("shipwreck game-loop error at seed {seed}: {e}"))?;
+            Ok(result.winner)
+        }
+        RegisteredGame::GreatGyre(g) => {
+            let g = *g;
+            let cfg = GreatGyreConfig::new(2).expect("2-player GreatGyreConfig is always valid");
+            let a0 = build_greatgyre_agent(seat0, &AgentBuildCtx::cli(s0_seed, 0))?;
+            let a1 = build_greatgyre_agent(seat1, &AgentBuildCtx::cli(s1_seed, 1))?;
+            let mut agents: Vec<Box<dyn Agent<GreatGyreGame>>> = vec![a0, a1];
+            let mut loop_ = GameLoop::new(&g, g.initial_state(seed, &cfg));
+            let mut chance_rng = ProductionRng::from_seed(seed);
+            let mut sink = StubGameEventSink::new();
+            let result = loop_
+                .run(agents.as_mut_slice(), &mut chance_rng, &mut sink)
+                .await
+                .map_err(|e| anyhow::anyhow!("greatgyre game-loop error at seed {seed}: {e}"))?;
             Ok(result.winner)
         }
     }

@@ -132,5 +132,9 @@ fn ingest_dir(
             ShipWreckGame::NAME,
             &ShipWreckMetrics,
         )?,
+        RegisteredGame::GreatGyre(_) => anyhow::bail!(
+            "playtest compare --game greatgyre: no MetricRegistry implemented yet for Great \
+             Gyre (out of scope for the Unit 5 views/registry/agents work)"
+        ),
     })
 }

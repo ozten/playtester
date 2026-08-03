@@ -351,6 +351,17 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
                     })
                     .collect();
             }
+            // Any survivors nobody drafted were folded into the shuffle
+            // pool by `build_post_draft_setup_event` (see that
+            // function) and are now dealt out into hands/Currents/
+            // decks above — clear the source list so it doesn't keep a
+            // stale second copy of those same physical cards (Unit 5's
+            // `public_view`/`determinize` work surfaced this: a
+            // lingering leftover-survivor entry here would have been
+            // simultaneously "public" via `undrafted_survivors` and
+            // hidden via whichever hand/Current/deck it actually
+            // landed in).
+            state.undrafted_survivors.clear();
             state.pending_shuffle_pool.clear();
             state.pending_event_pool.clear();
             state.deep_sea_deck.clone_from(deep_sea_deck);

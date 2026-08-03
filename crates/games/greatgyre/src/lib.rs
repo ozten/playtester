@@ -20,17 +20,22 @@
 //! printed stat tabs and sans event-card effects. Unit 3 wired up the
 //! active per-turn budget bonuses (add/draw/action) and the three
 //! special Phase-2 draw sources (Porter, Swimmer, Pirate). Unit 4
-//! (this unit) lands the event deck: `play_event` targeting legality,
-//! all seven event effects (Shark/Octopus/Walrus/Love Boat/Storm/Work
-//! Day/Land Sighting), the Dead Fish/Fisher reaction windows,
-//! Telescope activation, Walrus removal, and the Land Sighting/
-//! Influencer terms of final scoring.
+//! landed the event deck: `play_event` targeting legality, all seven
+//! event effects (Shark/Octopus/Walrus/Love Boat/Storm/Work Day/Land
+//! Sighting), the Dead Fish/Fisher reaction windows, Telescope
+//! activation, Walrus removal, and the Land Sighting/Influencer terms
+//! of final scoring. Unit 5 (this unit) lands the real redacted
+//! `PublicView` (see `public_view` module docs), a real `determinize`
+//! (see `determinize` module docs) with its property test, the
+//! `heuristic-greatgyre` eval (see `heuristic` module docs), and
+//! registry/CLI/server wiring.
 
 pub mod action;
 pub mod card;
 pub mod config;
 pub mod determinize;
 pub mod event;
+pub mod heuristic;
 pub mod public_view;
 pub mod resource;
 pub mod rules;
@@ -49,7 +54,11 @@ pub use card::{
 };
 pub use config::{ConfigError, GreatGyreConfig, MAX_PLAYERS, MIN_PLAYERS};
 pub use event::{Event, ScoreRow};
-pub use public_view::{GreatGyrePublicView, public_view};
+pub use heuristic::greatgyre_eval;
+pub use public_view::{
+    CurrentSlotView, GreatGyrePublicView, OpponentView, OwnView, PassDirection, SeatPublic,
+    public_view,
+};
 pub use resource::{Resource, ResourceCost};
 pub use rules::GreatGyreGame;
 pub use state::{

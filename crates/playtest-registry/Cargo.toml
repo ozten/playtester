@@ -17,6 +17,7 @@ playtest-agents.workspace = true
 playtest-log.workspace = true
 playtest-cribbage.workspace = true
 playtest-shipwreck.workspace = true
+playtest-greatgyre.workspace = true
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

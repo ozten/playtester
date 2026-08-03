@@ -63,12 +63,14 @@ Design decisions already made (do not relitigate):
   targeting legality, Shark/Octopus/Walrus (+removal action)/Love Boat/
   Storm/Work Day/Land Sighting, Dead Fish + Fisher reaction windows,
   Telescope activation. Soak again with events on. Commit: `2a6a602`.
-- [ ] **U5 — views, registry, agents, CLI.** `PublicView` redaction per
+- [x] **U5 — views, registry, agents, CLI.** `PublicView` redaction per
   spec + property test (view never contains hidden identities),
   registry integration (`greatgyre` game + `greedy-greatgyre` /
   `heuristic-greatgyre` linear eval: raft hope, buildable-hope potential,
   food-deficit penalty, resource/tempo terms), `api-schema` regen,
   10k-game `#[ignore]` soak, determinism byte-identity check,
-  `heuristic beats random` sanity (>70% target).
+  `heuristic beats random` sanity (>70% target). Commit: `<pending>`
+  (this unit's own commit — see `git log` for the actual hash of
+  "feat(greatgyre): U5 — views, registry, agents, CLI").
 - [ ] **U6 — docs.** README game table row, `docs/api-contract.md`
   greatgyre note (4-seat example), BENCHMARKS entry.
