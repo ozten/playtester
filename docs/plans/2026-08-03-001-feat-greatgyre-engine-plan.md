@@ -69,8 +69,6 @@ Design decisions already made (do not relitigate):
   `heuristic-greatgyre` linear eval: raft hope, buildable-hope potential,
   food-deficit penalty, resource/tempo terms), `api-schema` regen,
   10k-game `#[ignore]` soak, determinism byte-identity check,
-  `heuristic beats random` sanity (>70% target). Commit: `<pending>`
-  (this unit's own commit — see `git log` for the actual hash of
-  "feat(greatgyre): U5 — views, registry, agents, CLI").
+  `heuristic beats random` sanity (>70% target). Commit: `c14ae62`.
 - [ ] **U6 — docs.** README game table row, `docs/api-contract.md`
   greatgyre note (4-seat example), BENCHMARKS entry.
