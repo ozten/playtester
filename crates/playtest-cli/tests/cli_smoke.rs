@@ -167,6 +167,118 @@ fn replay_with_out_of_range_tick_errors() {
         .stderr(predicate::str::contains("out of range"));
 }
 
+/// Core args for `play --game greatgyre` with a fixed clock, 4 random
+/// agents.
+fn play_greatgyre_args(dir: &TempDir, games: u32, seed: u64) -> Vec<String> {
+    vec![
+        "play".into(),
+        "--game".into(),
+        "greatgyre".into(),
+        "--agents".into(),
+        "random,random,random,random".into(),
+        "--games".into(),
+        games.to_string(),
+        "--seed".into(),
+        seed.to_string(),
+        "--out".into(),
+        dir.path().to_string_lossy().into_owned(),
+        "--fixed-time".into(),
+        "0".into(),
+    ]
+}
+
+#[test]
+fn replay_public_view_dump_has_one_line_per_event_and_parses() {
+    let dir = TempDir::new().unwrap();
+    bin()
+        .args(play_greatgyre_args(&dir, 1, 77))
+        .assert()
+        .success();
+    let log = dir.path().join("game-0000.jsonl");
+    let out_dir = TempDir::new().unwrap();
+    let view_out = out_dir.path().join("views.jsonl");
+
+    bin()
+        .args([
+            "replay",
+            log.to_string_lossy().as_ref(),
+            "--public-view-observer",
+            "0",
+            "--public-view-out",
+            view_out.to_string_lossy().as_ref(),
+        ])
+        .assert()
+        .success();
+
+    // Count `kind: event` lines in the source log.
+    let log_text = fs::read_to_string(&log).unwrap();
+    let event_count = log_text
+        .lines()
+        .filter(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            v.get("kind").and_then(|k| k.as_str()) == Some("event")
+        })
+        .count();
+    assert!(event_count > 0, "expected at least one event in the log");
+
+    let view_text = fs::read_to_string(&view_out).unwrap();
+    let view_lines: Vec<&str> = view_text.lines().collect();
+    assert_eq!(
+        view_lines.len(),
+        event_count,
+        "expected one view line per event"
+    );
+
+    for (i, line) in view_lines.iter().enumerate() {
+        let v: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("view line {i} failed to parse: {e}\nline: {line}"));
+        let tick = v.get("tick").and_then(serde_json::Value::as_u64).unwrap();
+        assert_eq!(tick, (i as u64) + 1, "tick should be 1-based and in order");
+        let view = v.get("view").expect("view line missing `view` field");
+        assert_eq!(
+            view.get("observer").and_then(serde_json::Value::as_u64),
+            Some(0),
+            "view should be for observer seat 0"
+        );
+        assert!(
+            view.get("own").is_some(),
+            "greatgyre view missing `own`: {view}"
+        );
+    }
+}
+
+#[test]
+fn replay_public_view_flags_must_be_passed_together() {
+    let dir = TempDir::new().unwrap();
+    bin()
+        .args(play_greatgyre_args(&dir, 1, 55))
+        .assert()
+        .success();
+    let log = dir.path().join("game-0000.jsonl");
+
+    bin()
+        .args([
+            "replay",
+            log.to_string_lossy().as_ref(),
+            "--public-view-observer",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("must be passed together"));
+
+    bin()
+        .args([
+            "replay",
+            log.to_string_lossy().as_ref(),
+            "--public-view-out",
+            "/tmp/wont-be-written.jsonl",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("must be passed together"));
+}
+
 #[test]
 fn help_text_is_readable() {
     let out = bin()

@@ -2398,6 +2398,7 @@ dependencies = [
  "predicates",
  "rayon",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
