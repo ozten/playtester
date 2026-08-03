@@ -14,10 +14,11 @@
 //! `docs/plans/2026-08-03-001-feat-greatgyre-engine-plan.md` for the
 //! unit breakdown.
 //!
-//! Unit 1 (this unit) ships the crate skeleton, card catalog, state
-//! shape, and the setup/survivor-draft flow: `Phase::SurvivorDraft`
-//! plus the one post-draft chance step. The five-phase turn machine
-//! (`Phase::Draw` / `Actions` / `ResolvingDecision`) lands in Unit 2.
+//! Unit 1 shipped the crate skeleton, card catalog, state shape, and
+//! the setup/survivor-draft flow. Unit 2 (this unit) lands the
+//! five-phase turn machine (`Game` trait impl), sans survivor
+//! abilities beyond their printed stat tabs and sans event-card
+//! effects — both land in later units.
 
 pub mod action;
 pub mod card;
@@ -29,6 +30,7 @@ pub mod resource;
 pub mod rules;
 pub mod scoring;
 pub mod state;
+pub mod turns;
 
 #[doc(hidden)]
 pub mod pool;

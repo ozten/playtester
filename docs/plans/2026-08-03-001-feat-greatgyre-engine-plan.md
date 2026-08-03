@@ -43,14 +43,15 @@ Design decisions already made (do not relitigate):
   spec, `State`/`Event` types, seeded setup (hands, face-up Currents,
   Final Round Deck 2×N, event cards, decks), `SurvivorDraft` phase,
   `initial_state`/`apply_event` fold discipline. Unit tests on setup
-  invariants + draft. Commit: `<pending>` (filled in by the U2 commit,
-  once this commit's real hash is known).
-- [ ] **U2 — core turn machine.** Phases 1–5 sans events/abilities:
+  invariants + draft. Commit: `247de1d`.
+- [x] **U2 — core turn machine.** Phases 1–5 sans events/abilities:
   auto-add, draw-from-own-Current + finish, actions (play survivor, build
   modification incl. space rules, build extension, finish), discard-down,
   food confirm with hungry/stand choices, simultaneous pass, first-player
   rotation, final-round trigger + hope scoring + `end_game`. Small
   random-self-play soak (1k games, no panics, all games terminate).
+  Commit: `<pending>` (this unit's own commit — see `git log` for the
+  actual hash of "feat(greatgyre): U2 — five-phase turn machine, ...").
  
 - [ ] **U3 — abilities & modifiers.** Stat aggregation from raft
   (add/draw/action/hand-size/food), Purser/First Mate/Athlete/Millionaire/
