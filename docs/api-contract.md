@@ -213,8 +213,8 @@ Example request:
 - `game` — must be an `id` from `/api/games-registry`.
 - `agents` — length must fall within the game's declared player-count
   range (`playtest_registry::game_registry::player_count_range`):
-  exactly 2 for Cribbage, 2–4 for ShipWreck. Requests outside that
-  range are rejected with `InvalidConfig`.
+  exactly 2 for Cribbage, 2–4 for ShipWreck, 2–4 for Great Gyre.
+  Requests outside that range are rejected with `InvalidConfig`.
 - `games_count` — positive integer.
 - `seed` — optional. Omit to let the server pick one.
 - `config` — optional, game-specific blob.
@@ -521,6 +521,64 @@ The next frame on the stream is an `event` carrying
 repeats for each pegging play and for the show-phase confirmation;
 see *Cribbage event payloads* below for the full taxonomy.
 
+### Worked Great Gyre example (4 seats)
+
+Great Gyre supports 2–4 seats; this example drives all four, seat 0
+human-controlled, seats 1–3 AI:
+
+```sh
+curl -s -X POST localhost:7878/api/runs \
+  -H 'content-type: application/json' \
+  -d '{"game":"greatgyre","agents":["http-remote","heuristic-greatgyre","heuristic-greatgyre","greedy-greatgyre"],"games_count":1,"seed":11}'
+```
+
+Subscribe to the per-game stream (new game is `game-0000`):
+
+```
+GET /api/runs/{run_id}/games/game-0000/stream
+```
+
+The game opens in `Phase::SurvivorDraft` — the very first decision is
+seat 0's `turn_prompt`, offering all twelve undrafted survivors:
+
+```
+event: turn_prompt
+data: {"seat":0,"prompt_id":0,"legal_actions":[
+  {"kind":"draft_survivor","survivor":"captain"},
+  {"kind":"draft_survivor","survivor":"purser"},
+  {"kind":"draft_survivor","survivor":"fisher"},
+  {"kind":"draft_survivor","survivor":"first_mate"},
+  {"kind":"draft_survivor","survivor":"survivalist"},
+  {"kind":"draft_survivor","survivor":"influencer"},
+  {"kind":"draft_survivor","survivor":"stowaway"},
+  {"kind":"draft_survivor","survivor":"pirate"},
+  {"kind":"draft_survivor","survivor":"millionaire"},
+  {"kind":"draft_survivor","survivor":"porter"},
+  {"kind":"draft_survivor","survivor":"athlete"},
+  {"kind":"draft_survivor","survivor":"swimmer"}
+]}
+```
+
+Submit "Captain" (index 0):
+
+```sh
+curl -s -X POST localhost:7878/api/runs/{run_id}/games/game-0000/actions \
+  -H 'content-type: application/json' \
+  -d '{"seat":0,"prompt_id":0,"action_index":0}'
+```
+
+The next `event` frame carries `payload.kind == "survivor_drafted"`.
+Seats 1–3 draft automatically (AI-driven), then a chance step
+(`post_draft_setup`) deals hands/Currents/decks and the game enters
+`Phase::Draw` for seat 0 — the next `turn_prompt` offers each of seat
+0's own Current cards (by `CardInstanceId`, some face-up with a known
+`kind`, some face-down and only identifiable once drawn) plus
+`finish_drawing`. The request → choose → submit cycle repeats through
+Phase 2 (draw), Phase 3 (actions), any pending-decision prompts
+(hand-limit discard, Phase-4 hungry/stand-up, event reactions), and
+around the table again each round; see *Great Gyre event payloads*
+below for the full taxonomy.
+
 ### What is NOT in this phase
 
 - **No stdio / subprocess protocol.** That is Phase 3.
@@ -662,6 +720,132 @@ against this taxonomy to recover typed Cribbage state.
   `/events?offset=N&limit=M` are in line-count order, not
   tick order: offset 0 is the header, offset 1 is tick 0, offset
   `total - 1` is the `final` record.
+
+### Great Gyre event payloads
+
+`payload.kind` is `snake_case`. Every variant below is what the
+server puts on the wire for a Great Gyre game; parse `payload`
+against this taxonomy to recover typed Great Gyre state. See
+[`docs/greatgyre.md`](greatgyre.md) for the rules these events
+implement.
+
+| `payload.kind`               | Fires when                                                                 |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| `survivor_drafted`           | A seat claimed a survivor during `Phase::SurvivorDraft`. Once per seat.     |
+| `post_draft_setup`           | Chance step: post-draft shuffle + deal (hands, Currents, Final Round Deck, Event Deck, first Phase-1 add). Once per game. |
+| `turn_started`                | A new turn segment (Phases 1–4) begins for a seat.                          |
+| `final_round_triggered`      | The Deep Sea Deck emptied during a Phase-1 draw; this round is now final.   |
+| `current_card_added`         | Phase 1 (auto): one card added face-down to a seat's own Current.          |
+| `card_drawn_from_current`    | Phase 2: seat drew a card from their own Current into hand.                 |
+| `drew_from_discard_pile`     | Phase 2, Porter: drew the top of the shared Discard Pile instead.           |
+| `drew_from_adjacent_current` | Phase 2, Swimmer: drew from a neighbor's Current instead.                   |
+| `pirate_steal_initiated`     | Phase 2, Pirate: a random-steal target was chosen; the actual card is a following chance step. |
+| `pirate_stole`                | Chance: the card Pirate's random steal took from the target's hand.        |
+| `drawing_finished`            | Phase 2 ends (budget exhausted or `finish_drawing`).                        |
+| `survivor_played`             | Phase 3: a survivor moved from hand onto the raft.                          |
+| `resource_discarded`          | A resource card left hand to the Discard Pile, paying for a build.          |
+| `modification_built`          | Phase 3: a modification was built from hand.                                |
+| `extension_built`             | Phase 3: a raft extension was built from the shared pile.                   |
+| `actions_finished`            | Phase 3 ends (budget exhausted or `finish_actions`).                        |
+| `pending_decision_opened`     | A new pending decision opened (discard-down, hungry/stand-up, event reaction/targeting/resolution). |
+| `card_discarded`              | Hand-limit discard: a card moved from hand to the seat's own Current, face-down. |
+| `survivor_made_hungry`        | Phase 4: a survivor turned Hungry (sideways) to cover a food deficit.       |
+| `survivor_abandoned`          | Phase 4: a Hungry survivor was returned to the Current face-up (deficit exceeded standing survivors). |
+| `survivor_stood_up`           | Phase 4: a Hungry survivor stood back up (food surplus).                    |
+| `turn_ended`                   | A seat's turn segment (Phases 1–4) is complete.                             |
+| `currents_passed`             | Phase 5 (auto): every Current passed left; the First Player token passed too. Skipped in the Final Round. |
+| `event_card_played`           | A seat played an event card, optionally targeting another seat.             |
+| `reaction_declined`           | The event's target declined (or had no) reaction; the attack proceeds.     |
+| `reacted_with_dead_fish`      | The target discarded a Dead Fish to negate the attack.                     |
+| `reacted_with_fisher`         | The target's Fisher discarded a hand card to negate the attack.            |
+| `walrus_placed`                | A Walrus landed, blocking one space on the target's raft.                  |
+| `walrus_discarded`            | A reaction negated a Walrus; it goes straight to the Discard Pile instead.  |
+| `walrus_removed`               | A seat discarded a Dead Fish to remove a Walrus blocking their own space.   |
+| `survivor_lost_to_shark`      | Shark Attack landed: the target gave up a survivor to the Discard Pile.    |
+| `extension_lost_to_octopus`   | Octopus Attack landed: the target lost an extension back to the shared pile. |
+| `relocated_from_octopus`      | Octopus Attack capacity shortfall: a card moved to the target's own Current, face-up. |
+| `survivor_given_to_love_boat` | Love Boat: the target gave a survivor, which moves onto the caster's raft. |
+| `storm_card_removed`          | Storm: a seat removed a placed card to their own Current, face-up.         |
+| `storm_discard_route_taken`   | Storm: a seat chose the discard route instead of removing a placed card.   |
+| `work_day_activated`          | Work Day: unlimited actions + free own-Current draws active for this turn. |
+| `work_day_drew`                | Work Day: a free draw from own Current (doesn't touch the normal draw budget). |
+| `telescope_activated`         | A built Telescope was discarded to draw one Event card into hand.          |
+| `event_resolved`               | The current event-interrupt chain fully resolved; control returns to the caster's `Phase::Actions`. |
+| `end_game`                     | The game ended. `winners` may hold more than one seat — Great Gyre ties all win. |
+
+**Worked examples** (captured from `playtest play --game greatgyre
+--agents random,random,random,random --seed 7`):
+
+```json
+{"kind":"survivor_drafted","player":0,"survivor":{"id":11,"kind":{"kind":"survivor","first_mate":null}}}
+{"kind":"card_drawn_from_current","player":0,"card":{"id":71,"kind":{"kind":"resource","rope":null}}}
+{"kind":"drawing_finished","player":0}
+{"kind":"event_card_played","player":0,"card":{"id":125,"kind":{"kind":"event","walrus":null}},"target":{"kind":"player","target":2}}
+{"kind":"pending_decision_opened","player":2,"decision":{"kind":"event_reaction","attacker":0,"event":"walrus","held_card":{"id":125,"kind":{"kind":"event","walrus":null}}}}
+{"kind":"reaction_declined","player":2}
+{"kind":"walrus_placed","player":2,"attacker":0,"card":{"id":125,"kind":{"kind":"event","walrus":null}}}
+{"kind":"resource_discarded","player":0,"card":{"id":46,"kind":{"kind":"resource","rope":null}}}
+{"kind":"extension_built","player":0,"extension":{"id":141,"kind":{"kind":"raft_extension"}}}
+{"kind":"turn_ended","player":0}
+{"kind":"currents_passed","new_first_player":1}
+{"kind":"modification_built","player":0,"card":{"id":24,"kind":{"kind":"modification","sail":null}}}
+{"kind":"survivor_played","player":1,"card":{"id":14,"kind":{"kind":"survivor","stowaway":null}}}
+{"kind":"survivor_made_hungry","player":1,"survivor":{"id":14,"kind":{"kind":"survivor","stowaway":null}}}
+{"kind":"survivor_lost_to_shark","player":1,"survivor":{"id":9,"kind":{"kind":"survivor","purser":null}}}
+{"kind":"telescope_activated","player":0,"telescope":{"id":41,"kind":{"kind":"modification","telescope":null}},"drawn":{"id":127,"kind":{"kind":"event","storm":null}}}
+{"kind":"survivor_stood_up","player":1,"survivor":{"id":14,"kind":{"kind":"survivor","stowaway":null}}}
+{"kind":"pirate_steal_initiated","player":3,"target":1}
+{"kind":"pirate_stole","player":3,"target":1,"card":{"id":85,"kind":{"kind":"resource","wood":null}}}
+{"kind":"final_round_triggered"}
+{"kind":"end_game","winners":[3],"reason":"Victory","final_scores":[{"player":0,"hope":20},{"player":1,"hope":25},{"player":2,"hope":25},{"player":3,"hope":35}]}
+```
+
+**Sub-shapes:**
+
+```jsonc
+// Card — every physical card carries a stable numeric instance id
+// (unique for the whole game, assigned once at setup) plus its
+// printed face. Duplicates (e.g. six Nets) get distinct `id`s so
+// replay and the UI can point at an exact physical copy.
+{ "id": 24, "kind": { "kind": "modification", "sail": null } }
+
+// CardKind — internally tagged on `kind`; survivor/modification/
+// event wrap their sub-enum under a field named after that sub-
+// enum's variant (a serde quirk of unit-payload adjacent tagging —
+// e.g. `{"kind":"survivor","captain":null}`, not
+// `{"kind":"survivor","value":"captain"}`). Other variants
+// (`dead_fish`, `raft_left`, `raft_right`, `raft_extension`) carry
+// no further payload. `resource` wraps one of `rope`/`wood`/`plastic`
+// the same way.
+
+// EventTarget on event_card_played — one of:
+{ "kind": "player", "target": 2 }   // Shark/Octopus/Walrus/Love Boat
+{ "kind": "none" }                   // Storm, Work Day (no single target)
+
+// ScoreRow on end_game.final_scores — one per seat, seat order:
+{ "player": 3, "hope": 35 }
+// `winners` lists every seat tied for the max score — Great Gyre's
+// rule is "all tied players win" — so it can hold more than one seat
+// even though `final.winner` (the envelope-level record) can only
+// name one (the lowest-seat winner when tied; read `winners` for the
+// authoritative multi-winner list).
+```
+
+**Notes for UI work.**
+- **Hidden information.** Face-down Current cards are hidden from
+  *everyone*, including the owner, until drawn — a spectator/fog-of-
+  war view must not reveal `current_card_added`'s `card` identity nor
+  any player's undrawn face-down Current slots to anyone but a replay
+  tool with full-log access. `post_draft_setup`'s `hands`/`currents`
+  arrays are similarly full-information (every seat's dealt cards) —
+  a per-seat UI must filter this client-side to that seat's own hand
+  plus every seat's face-up Current only. See `docs/greatgyre.md`'s
+  "Hidden information & views" section for the exact redaction rules
+  the engine's `PublicView` implements server-side for search agents.
+- `end_game.winners` can hold multiple seats (a tie). Render all of
+  them as winners, not just `final.winner`.
+- `tick` on the `event` frame is both the JSONL event index and the
+  SSE `id:` for reconnection, same as every other game.
 
 ## Error codes
 

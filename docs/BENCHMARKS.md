@@ -147,6 +147,41 @@ cargo test --release -p playtest-shipwreck  --test heuristic_beats_random -- --i
 
 Sources: `crates/games/{cribbage,shipwreck}/tests/heuristic_beats_random.rs`.
 
+## Great Gyre — heuristic-greatgyre vs random (Unit 5 sanity benchmark)
+
+Unit 5's plan called for a lighter bar than R2.2's ≥ 90% (which is
+scoped to the two Phase-0/2 games): "non-ignored quick sanity
+`heuristic-greatgyre beats random` (100+ games, must exceed 70% win
+share)".
+
+| Games | Measured | Bar | Margin |
+|---|---|---|---|
+| 200 (always-run smoke) | **73.5%** | ≥ 70% | +3.5 pp |
+| 10,000 (`#[ignore]`, full estimate) | **73.48%** | ≥ 70% | +3.48 pp |
+
+`heuristic-greatgyre` is `HeuristicAgent::with_temperature(0.5)` over
+`greatgyre_eval`: raft hope (dominant, tracks the real end-of-game
+score formula exactly since every input — own hand, every raft's
+placed cards — is public), a max-based (not summed — see the eval
+module's doc comment for the double-counting bug that caught) buildable-
+hope-potential term, realized draw/action-engine investment (built
+Net/Toolkit, or Athlete/First Mate), a food-deficit penalty scaled by
+how many standing survivors are at risk (mild if coverable by turning
+survivors Hungry, much heavier if it forces abandoning one), a food-
+surplus reward, and small free-space/hand-size tempo terms. Two-player
+games only (matchup harness limitation, not an engine one — Great
+Gyre plays 2–4).
+
+Reproduce:
+
+```bash
+cargo test --release -p playtest-greatgyre --test heuristic_beats_random -- --nocapture
+cargo test --release -p playtest-greatgyre --test heuristic_beats_random -- --ignored --nocapture
+```
+
+Sources: `crates/games/greatgyre/src/heuristic.rs`,
+`crates/games/greatgyre/tests/heuristic_beats_random.rs`.
+
 ## R2.3 — ISMCTSAgent beats HeuristicAgent (SO-ISMCTS)
 
 | Game | Games | Iterations | Measured | Bar | Status | Wall time (4-core reference) |

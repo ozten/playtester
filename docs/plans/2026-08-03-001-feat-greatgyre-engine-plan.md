@@ -70,5 +70,7 @@ Design decisions already made (do not relitigate):
   food-deficit penalty, resource/tempo terms), `api-schema` regen,
   10k-game `#[ignore]` soak, determinism byte-identity check,
   `heuristic beats random` sanity (>70% target). Commit: `c14ae62`.
-- [ ] **U6 — docs.** README game table row, `docs/api-contract.md`
-  greatgyre note (4-seat example), BENCHMARKS entry.
+- [x] **U6 — docs.** README game table row, `docs/api-contract.md`
+  greatgyre note (4-seat example), BENCHMARKS entry. Commit:
+  `<pending>` (this unit's own commit — see `git log` for the actual
+  hash of "docs(greatgyre): U6 — README, api-contract, BENCHMARKS").

@@ -14,6 +14,7 @@ See [`playtest-roadmap.md`](playtest-roadmap.md) for the full roadmap and [`docs
 |------|---------|--------|-------|
 | [Cribbage](crates/games/cribbage/) | 2 | Shipped | 121-point standard rules. Full show/crib/pegging/nobs/nibs scoring. |
 | [ShipWreck](crates/games/shipwreck/) | 2–4 | Shipped (Phase 2, Unit 24) | Custom rescue-points card game with raft extensions, equipment upgrades, and event cards (Shark / Typhoon / FlyingFish). See [`docs/shipwreck.md`](docs/shipwreck.md). |
+| [Great Gyre](crates/games/greatgyre/) | 2–4 | Shipped (Unit 5) | Official-rules raft-survival game: survivor draft, hidden-Current hand economy, 7 event cards (Shark / Octopus / Walrus / Love Boat / Storm / Work Day / Land Sighting), Hope-based scoring, all tied players win. See [`docs/greatgyre.md`](docs/greatgyre.md). |
 
 ## Build
 
