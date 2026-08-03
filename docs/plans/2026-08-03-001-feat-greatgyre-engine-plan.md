@@ -57,12 +57,12 @@ Design decisions already made (do not relitigate):
   Survivalist/Swimmer(+1 food)/Stowaway(no space)/Quarterdeck(net +1),
   special draw sources (Porter discard-top, Swimmer adjacent Current,
   Pirate chance steal), Fishing Rod/Telescope hand-size effects.
-  Commit: `<pending>` (filled in below).
+  Commit: `53fad57`.
  
-- [ ] **U4 — events & reactions.** Event deck + play-event action +
+- [x] **U4 — events & reactions.** Event deck + play-event action +
   targeting legality, Shark/Octopus/Walrus (+removal action)/Love Boat/
   Storm/Work Day/Land Sighting, Dead Fish + Fisher reaction windows,
-  Telescope activation. Soak again with events on.
+  Telescope activation. Soak again with events on. Commit: `<pending>`.
 - [ ] **U5 — views, registry, agents, CLI.** `PublicView` redaction per
   spec + property test (view never contains hidden identities),
   registry integration (`greatgyre` game + `greedy-greatgyre` /

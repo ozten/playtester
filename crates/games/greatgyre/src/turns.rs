@@ -56,10 +56,13 @@ pub fn compute_food(player: &PlayerState) -> i32 {
 /// `(spaces used, total capacity)`. Capacity = 2 (base raft) + 2 per
 /// built extension + 2 per built Quarterdeck (which also occupies 1 of
 /// its own, netting +1). Usage counts every placed survivor except
-/// Stowaway, plus every placed space-occupying modification.
+/// Stowaway, every placed space-occupying modification, and every
+/// Walrus currently blocking a space on this raft (each Walrus blocks
+/// exactly 1 space — the plan's exception to the fungible-count
+/// model).
 #[must_use]
 pub fn raft_capacity(player: &PlayerState) -> (u32, u32) {
-    let mut used = 0u32;
+    let mut used = u32::try_from(player.blocked_by_walrus.len()).unwrap_or(u32::MAX);
     let mut total = 2 + 2 * u32::try_from(player.built_extensions.len()).unwrap_or(u32::MAX);
     for p in &player.placed {
         let occupies = match p.card.kind {
@@ -198,6 +201,60 @@ pub fn adjacent_players(num_players: usize, player: PlayerId) -> Vec<PlayerId> {
     } else {
         vec![left, right]
     }
+}
+
+// ---------- Unit 4: events & reactions -------------------------------------
+
+/// True if `hand` holds at least one Dead Fish.
+#[must_use]
+pub fn has_dead_fish(hand: &[Card]) -> bool {
+    hand.iter().any(|c| matches!(c.kind, CardKind::DeadFish))
+}
+
+/// True if `player` has a Fisher placed on their raft (hungry or
+/// standing — see `has_survivor`'s doc comment).
+#[must_use]
+pub fn has_fisher(player: &PlayerState) -> bool {
+    has_survivor(player, SurvivorId::Fisher)
+}
+
+/// Hand cards that are *not* event cards — the only cards Storm's
+/// "discard 2 hand cards" route may pick from (event cards are exempt
+/// from Max Hand Size and, per the spec's phrasing, from this discard
+/// too).
+#[must_use]
+pub fn non_event_hand_count(hand: &[Card]) -> u8 {
+    let n = hand
+        .iter()
+        .filter(|c| !matches!(c.kind, CardKind::Event(_)))
+        .count();
+    u8::try_from(n).unwrap_or(u8::MAX)
+}
+
+/// Number of survivors (hungry or standing) placed on `player`'s raft
+/// — the eligibility count for Shark Attack / Love Boat targeting.
+#[must_use]
+pub fn survivor_count(player: &PlayerState) -> usize {
+    player
+        .placed
+        .iter()
+        .filter(|pc| matches!(pc.card.kind, CardKind::Survivor(_)))
+        .count()
+}
+
+/// Storm's resolution order: starting with `caster`'s down-current
+/// neighbor and proceeding around, excluding `caster`. "Down-current"
+/// is ruled `[A]` to be the same "left" direction Phase 5 already
+/// passes Currents in (`(seat + 1) % n`) — the spec fixes a single
+/// physical direction and Phase 5's is the only one already pinned
+/// down, so reusing it is the most consistent reading.
+#[must_use]
+pub fn storm_order(num_players: usize, caster: PlayerId) -> Vec<PlayerId> {
+    let n = num_players;
+    let start = usize::from(caster);
+    (1..n)
+        .map(|k| u8::try_from((start + k) % n).expect("seat fits in u8"))
+        .collect()
 }
 
 #[cfg(test)]

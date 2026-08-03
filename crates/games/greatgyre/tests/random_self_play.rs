@@ -30,6 +30,10 @@ fn all_card_ids(state: &playtest_greatgyre::GameState) -> Vec<Card> {
         out.extend(p.current.iter().map(|c| c.card));
         out.extend(p.built_extensions.iter().copied());
         out.extend(p.placed.iter().map(|pc| pc.card));
+        // The Walrus-in-play zone (Unit 4): Walrus cards blocking a
+        // space on this player's raft are neither in anyone's hand nor
+        // the shared Discard Pile.
+        out.extend(p.blocked_by_walrus.iter().copied());
     }
     out.extend(state.deep_sea_deck.iter().copied());
     out.extend(state.final_round_deck.iter().copied());

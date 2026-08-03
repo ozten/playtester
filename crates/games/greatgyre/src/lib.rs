@@ -17,10 +17,14 @@
 //! Unit 1 shipped the crate skeleton, card catalog, state shape, and
 //! the setup/survivor-draft flow. Unit 2 landed the five-phase turn
 //! machine (`Game` trait impl), sans survivor abilities beyond their
-//! printed stat tabs and sans event-card effects. Unit 3 (this unit)
-//! wires up the active per-turn budget bonuses (add/draw/action) and
-//! the three special Phase-2 draw sources (Porter, Swimmer, Pirate).
-//! Event-card effects remain out of scope until Unit 4.
+//! printed stat tabs and sans event-card effects. Unit 3 wired up the
+//! active per-turn budget bonuses (add/draw/action) and the three
+//! special Phase-2 draw sources (Porter, Swimmer, Pirate). Unit 4
+//! (this unit) lands the event deck: `play_event` targeting legality,
+//! all seven event effects (Shark/Octopus/Walrus/Love Boat/Storm/Work
+//! Day/Land Sighting), the Dead Fish/Fisher reaction windows,
+//! Telescope activation, Walrus removal, and the Land Sighting/
+//! Influencer terms of final scoring.
 
 pub mod action;
 pub mod card;
@@ -39,7 +43,7 @@ pub mod pool;
 #[doc(hidden)]
 pub mod setup;
 
-pub use action::{Action, DecisionChoice};
+pub use action::{Action, DecisionChoice, EventTarget};
 pub use card::{
     Card, CardInstanceId, CardKind, EventKind, ModificationKind, SurvivorId,
 };

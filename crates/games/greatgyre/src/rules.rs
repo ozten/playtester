@@ -38,7 +38,8 @@ use crate::state::{
 };
 use crate::turns::{
     action_bonus, add_bonus, adjacent_players, can_afford, compute_food, compute_hand_limit,
-    draw_bonus, extension_cost, find_in_hand, free_spaces, has_survivor, select_payment,
+    draw_bonus, extension_cost, find_in_hand, free_spaces, has_fisher, has_survivor,
+    select_payment, storm_order, survivor_count,
 };
 
 /// Zero-sized game marker. Instances are cheap and stateless.
@@ -379,6 +380,7 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
             state.players[idx].porter_used = false;
             state.players[idx].swimmer_used = false;
             state.players[idx].pirate_used = false;
+            state.players[idx].work_day_active = false;
             state.phase = Phase::Draw;
         }
         Event::FinalRoundTriggered => {
@@ -481,11 +483,6 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
             state.players[idx].actions_remaining =
                 state.players[idx].actions_remaining.saturating_sub(1);
         }
-        Event::ResourceDiscarded { player, card } => {
-            let idx = *player as usize;
-            remove_from_hand(&mut state.players[idx].hand, card.id);
-            state.discard_pile.push(*card);
-        }
         Event::ExtensionBuilt { player, extension } => {
             let idx = *player as usize;
             if let Some(pos) = state
@@ -500,9 +497,26 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
                 state.players[idx].actions_remaining.saturating_sub(1);
         }
         Event::PendingDecisionOpened { player, decision } => {
+            // Nothing in Units 1-4 nests decisions — every decision
+            // kind's resolution pops itself (via `decrement_pending` /
+            // `pop_pending`, both driven by the resolving *event*, not
+            // a bare mutation on a scratch clone) before the chain
+            // opens the next one. If this ever fires, a resolution
+            // path is popping on a throwaway `work` clone instead of
+            // through an event, so the pop never reached real state —
+            // exactly the bug class `pop_pending`'s doc comment
+            // describes (caught here once, for Walrus/Octopus reaction
+            // resolution, before Unit 4 shipped).
+            assert!(
+                state.pending_decisions.is_empty(),
+                "pushing {decision:?} for player {player} while the pending-decision stack \
+                 already has {:?} — a resolution path popped a scratch clone instead of \
+                 emitting an event",
+                state.pending_decisions
+            );
             state.pending_decisions.push(PendingDecision {
                 player: *player,
-                kind: *decision,
+                kind: decision.clone(),
             });
             state.phase = Phase::ResolvingDecision;
         }
@@ -513,7 +527,12 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
                 card: *card,
                 face: Face::Down,
             });
-            decrement_pending(state, *player, |k| matches!(k, PendingDecisionKind::DiscardDown { .. }));
+            decrement_pending(state, *player, |k| {
+                matches!(
+                    k,
+                    PendingDecisionKind::DiscardDown { .. } | PendingDecisionKind::StormDiscard { .. }
+                )
+            });
         }
         Event::SurvivorMadeHungry { player, survivor } => {
             let idx = *player as usize;
@@ -557,8 +576,14 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
         Event::ActionsFinished { .. } | Event::TurnEnded { .. } => {
             // Pure log markers; the next event in the same batch
             // always carries the real state transition (a
-            // pending-decision open, Phase 4 auto-resolution, the
-            // following `TurnStarted`, or `EndGame`).
+            // pending-decision open, Phase 4 auto-resolution, or the
+            // following `TurnStarted`/`EndGame`).
+        }
+        Event::ReactionDeclined { player } => {
+            pop_pending(state, *player, |k| matches!(k, PendingDecisionKind::EventReaction { .. }));
+        }
+        Event::StormDiscardRouteTaken { player } => {
+            pop_pending(state, *player, |k| matches!(k, PendingDecisionKind::StormChoice { .. }));
         }
         Event::CurrentsPassed { new_first_player } => {
             let n = state.players.len();
@@ -574,6 +599,172 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
         }
         Event::EndGame { .. } => {
             state.phase = Phase::Finished;
+        }
+
+        // ---------- Unit 4: events & reactions --------------------------
+        Event::EventCardPlayed { player, card, .. } => {
+            let idx = *player as usize;
+            remove_from_hand(&mut state.players[idx].hand, card.id);
+            // Walrus stays in play (physically ends up on a raft, not
+            // the discard pile) unless the reaction negates it — see
+            // `Event::WalrusPlaced` / `Event::WalrusDiscarded`.
+            if !matches!(card.kind, CardKind::Event(crate::card::EventKind::Walrus)) {
+                state.discard_pile.push(*card);
+            }
+            state.players[idx].actions_remaining =
+                state.players[idx].actions_remaining.saturating_sub(1);
+        }
+        Event::ResourceDiscarded { player, card } => {
+            let idx = *player as usize;
+            remove_from_hand(&mut state.players[idx].hand, card.id);
+            state.discard_pile.push(*card);
+        }
+        Event::ReactedWithDeadFish { player, card } | Event::ReactedWithFisher { player, card } => {
+            let idx = *player as usize;
+            remove_from_hand(&mut state.players[idx].hand, card.id);
+            state.discard_pile.push(*card);
+            pop_pending(state, *player, |k| matches!(k, PendingDecisionKind::EventReaction { .. }));
+        }
+        Event::WalrusPlaced { player, card, .. } => {
+            state.players[*player as usize].blocked_by_walrus.push(*card);
+        }
+        Event::WalrusDiscarded { card, .. } => {
+            state.discard_pile.push(*card);
+        }
+        Event::WalrusRemoved {
+            player,
+            dead_fish,
+            walrus,
+        } => {
+            let idx = *player as usize;
+            remove_from_hand(&mut state.players[idx].hand, dead_fish.id);
+            state.discard_pile.push(*dead_fish);
+            if let Some(pos) = state.players[idx]
+                .blocked_by_walrus
+                .iter()
+                .position(|c| c.id == walrus.id)
+            {
+                state.players[idx].blocked_by_walrus.remove(pos);
+            }
+            state.discard_pile.push(*walrus);
+            state.players[idx].actions_remaining =
+                state.players[idx].actions_remaining.saturating_sub(1);
+        }
+        Event::SurvivorLostToShark { player, survivor } => {
+            let idx = *player as usize;
+            if let Some(pos) = state.players[idx]
+                .placed
+                .iter()
+                .position(|pc| pc.card.id == survivor.id)
+            {
+                state.players[idx].placed.remove(pos);
+            }
+            state.discard_pile.push(*survivor);
+            pop_pending(state, *player, |k| {
+                matches!(k, PendingDecisionKind::SharkChooseSurvivor { .. })
+            });
+        }
+        Event::ExtensionLostToOctopus { player, extension } => {
+            let idx = *player as usize;
+            if let Some(pos) = state.players[idx]
+                .built_extensions
+                .iter()
+                .position(|c| c.id == extension.id)
+            {
+                state.players[idx].built_extensions.remove(pos);
+            }
+            state.extension_pile.push(*extension);
+        }
+        Event::RelocatedFromOctopus { player, card } => {
+            let idx = *player as usize;
+            if let Some(pos) = state.players[idx]
+                .placed
+                .iter()
+                .position(|pc| pc.card.id == card.id)
+            {
+                state.players[idx].placed.remove(pos);
+            }
+            state.players[idx].current.push(CurrentCard {
+                card: *card,
+                face: Face::Up,
+            });
+            decrement_pending(state, *player, |k| {
+                matches!(k, PendingDecisionKind::OctopusRelocate { .. })
+            });
+        }
+        Event::SurvivorGivenToLoveBoat {
+            player,
+            recipient,
+            survivor,
+        } => {
+            let idx = *player as usize;
+            if let Some(pos) = state.players[idx]
+                .placed
+                .iter()
+                .position(|pc| pc.card.id == survivor.id)
+            {
+                state.players[idx].placed.remove(pos);
+            }
+            state.players[*recipient as usize].placed.push(PlacedCard {
+                card: *survivor,
+                hungry: false,
+            });
+            pop_pending(state, *player, |k| {
+                matches!(k, PendingDecisionKind::LoveBoatChooseSurvivor { .. })
+            });
+        }
+        Event::StormCardRemoved { player, card } => {
+            let idx = *player as usize;
+            if let Some(pos) = state.players[idx]
+                .placed
+                .iter()
+                .position(|pc| pc.card.id == card.id)
+            {
+                state.players[idx].placed.remove(pos);
+            }
+            state.players[idx].current.push(CurrentCard {
+                card: *card,
+                face: Face::Up,
+            });
+            pop_pending(state, *player, |k| matches!(k, PendingDecisionKind::StormChoice { .. }));
+        }
+        Event::WorkDayActivated { player } => {
+            state.players[*player as usize].work_day_active = true;
+        }
+        Event::WorkDayDrew { player, card } => {
+            let idx = *player as usize;
+            if let Some(pos) = state.players[idx]
+                .current
+                .iter()
+                .position(|c| c.card.id == card.id)
+            {
+                state.players[idx].current.remove(pos);
+            }
+            state.players[idx].hand.push(*card);
+        }
+        Event::TelescopeActivated {
+            player,
+            telescope,
+            drawn,
+        } => {
+            let idx = *player as usize;
+            if let Some(pos) = state.players[idx]
+                .placed
+                .iter()
+                .position(|pc| pc.card.id == telescope.id)
+            {
+                state.players[idx].placed.remove(pos);
+            }
+            state.discard_pile.push(*telescope);
+            if let Some(pos) = state.event_deck.iter().position(|c| c.id == drawn.id) {
+                state.event_deck.remove(pos);
+            }
+            state.players[idx].hand.push(*drawn);
+            state.players[idx].actions_remaining =
+                state.players[idx].actions_remaining.saturating_sub(1);
+        }
+        Event::EventResolved { .. } => {
+            state.phase = Phase::Actions;
         }
     }
 }
@@ -602,13 +793,32 @@ fn decrement_pending(
         return;
     }
     let remaining = top.kind.needed().saturating_sub(1);
-    top.kind = match top.kind {
+    top.kind = match &top.kind {
         PendingDecisionKind::DiscardDown { .. } => PendingDecisionKind::DiscardDown { needed: remaining },
         PendingDecisionKind::MakeHungry { .. } => PendingDecisionKind::MakeHungry { needed: remaining },
         PendingDecisionKind::AbandonHungry { .. } => {
             PendingDecisionKind::AbandonHungry { needed: remaining }
         }
         PendingDecisionKind::StandUp { .. } => PendingDecisionKind::StandUp { needed: remaining },
+        PendingDecisionKind::OctopusRelocate { attacker, .. } => PendingDecisionKind::OctopusRelocate {
+            needed: remaining,
+            attacker: *attacker,
+        },
+        PendingDecisionKind::StormDiscard {
+            attacker,
+            queue_tail,
+            ..
+        } => PendingDecisionKind::StormDiscard {
+            needed: remaining,
+            attacker: *attacker,
+            queue_tail: queue_tail.clone(),
+        },
+        PendingDecisionKind::EventReaction { .. }
+        | PendingDecisionKind::SharkChooseSurvivor { .. }
+        | PendingDecisionKind::LoveBoatChooseSurvivor { .. }
+        | PendingDecisionKind::StormChoice { .. } => {
+            unreachable!("decrement_pending is never called with a `pred` matching a single-shot decision kind")
+        }
     };
     if remaining == 0 {
         state.pending_decisions.pop();
@@ -618,6 +828,32 @@ fn decrement_pending(
             // event batch (see `apply_resolve_decision`).
         }
     }
+}
+
+/// If the top of the pending-decision stack belongs to `player` and
+/// its kind matches `pred`, pop it unconditionally (single-shot Unit 4
+/// decision kinds — `EventReaction`, `SharkChooseSurvivor`,
+/// `LoveBoatChooseSurvivor`, `StormChoice` — have no `needed` counter
+/// to decrement; one answer always fully resolves them). No-op
+/// otherwise.
+///
+/// This — not a bare `work.pending_decisions.pop()` on the throwaway
+/// clone used to compute a chain's events — is what actually removes
+/// the entry, because it runs from inside `apply_event_impl`. A pop
+/// that only touched the scratch clone would never be replayed onto
+/// the real state (the same fold-discipline bug U2's `round_queue`
+/// caught): the resolving *event* is the only thing that reaches
+/// `GameState` when the log is replayed, so any state change —
+/// including "this decision is done" — has to live in an event's
+/// `apply_event`, not in code that runs alongside it on a scratch copy.
+fn pop_pending(state: &mut GameState, player: PlayerId, pred: impl Fn(&PendingDecisionKind) -> bool) {
+    let Some(top) = state.pending_decisions.last() else {
+        return;
+    };
+    if top.player != player || !pred(&top.kind) {
+        return;
+    }
+    state.pending_decisions.pop();
 }
 
 // ============================================================================
@@ -678,7 +914,7 @@ fn legal_action_phase_actions(state: &GameState, player: PlayerId) -> Vec<Action
     }
     let p = &state.players[player as usize];
     let mut out = Vec::new();
-    if p.actions_remaining > 0 {
+    if actions_available(p) {
         for c in &p.hand {
             match c.kind {
                 CardKind::Survivor(s) if !s.occupies_space() || free_spaces(p) >= 1 => {
@@ -696,13 +932,129 @@ fn legal_action_phase_actions(state: &GameState, player: PlayerId) -> Vec<Action
         if !state.extension_pile.is_empty() && can_afford(&p.hand, extension_cost()) {
             out.push(Action::BuildExtension);
         }
+        out.extend(legal_play_event_actions(state, player));
+        out.extend(legal_activate_telescope_actions(state, p));
+        out.extend(legal_remove_walrus_actions(p));
+    }
+    if p.work_day_active {
+        // Work Day: drawing from your own Current becomes a free
+        // repeatable Phase-3 action, independent of `actions_remaining`.
+        out.extend(
+            p.current
+                .iter()
+                .map(|c| Action::WorkDayDraw { card: c.card.id }),
+        );
     }
     out.push(Action::FinishActions);
     out
 }
 
+/// Legal `PlayEvent` actions: one per (event card in hand × legal
+/// target), per `docs/greatgyre.md`'s Events table. Land Sighting is
+/// never offered — "never played". Storm and Work Day take no target.
+fn legal_play_event_actions(state: &GameState, player: PlayerId) -> Vec<Action> {
+    let p = &state.players[player as usize];
+    let n = state.players.len();
+    let mut out = Vec::new();
+    for c in &p.hand {
+        let CardKind::Event(kind) = c.kind else {
+            continue;
+        };
+        match kind {
+            crate::card::EventKind::SharkAttack => {
+                out.extend((0..n).filter_map(|i| {
+                    let target = u8::try_from(i).expect("seat fits in u8");
+                    (target != player && survivor_count(&state.players[i]) >= 2).then_some(
+                        Action::PlayEvent {
+                            card: c.id,
+                            target: crate::action::EventTarget::Player { target },
+                        },
+                    )
+                }));
+            }
+            crate::card::EventKind::OctopusAttack => {
+                out.extend((0..n).filter_map(|i| {
+                    let target = u8::try_from(i).expect("seat fits in u8");
+                    (target != player && !state.players[i].built_extensions.is_empty()).then_some(
+                        Action::PlayEvent {
+                            card: c.id,
+                            target: crate::action::EventTarget::Player { target },
+                        },
+                    )
+                }));
+            }
+            crate::card::EventKind::Walrus => {
+                out.extend((0..n).filter_map(|i| {
+                    let target = u8::try_from(i).expect("seat fits in u8");
+                    (target != player && free_spaces(&state.players[i]) >= 1).then_some(
+                        Action::PlayEvent {
+                            card: c.id,
+                            target: crate::action::EventTarget::Player { target },
+                        },
+                    )
+                }));
+            }
+            crate::card::EventKind::LoveBoat => {
+                if free_spaces(p) >= 1 {
+                    out.extend((0..n).filter_map(|i| {
+                        let target = u8::try_from(i).expect("seat fits in u8");
+                        (target != player && survivor_count(&state.players[i]) >= 2).then_some(
+                            Action::PlayEvent {
+                                card: c.id,
+                                target: crate::action::EventTarget::Player { target },
+                            },
+                        )
+                    }));
+                }
+            }
+            crate::card::EventKind::Storm | crate::card::EventKind::WorkDay => {
+                out.push(Action::PlayEvent {
+                    card: c.id,
+                    target: crate::action::EventTarget::None,
+                });
+            }
+            crate::card::EventKind::LandSighting => {}
+        }
+    }
+    out
+}
+
+fn legal_activate_telescope_actions(state: &GameState, p: &crate::state::PlayerState) -> Vec<Action> {
+    if state.event_deck.is_empty() {
+        return Vec::new();
+    }
+    p.placed
+        .iter()
+        .filter(|pc| matches!(pc.card.kind, CardKind::Modification(crate::card::ModificationKind::Telescope)))
+        .map(|pc| Action::ActivateTelescope { card: pc.card.id })
+        .collect()
+}
+
+fn legal_remove_walrus_actions(p: &crate::state::PlayerState) -> Vec<Action> {
+    if p.blocked_by_walrus.is_empty() {
+        return Vec::new();
+    }
+    let dead_fish: Vec<CardInstanceId> = p
+        .hand
+        .iter()
+        .filter(|c| matches!(c.kind, CardKind::DeadFish))
+        .map(|c| c.id)
+        .collect();
+    let mut out = Vec::new();
+    for walrus in &p.blocked_by_walrus {
+        for &dead_fish in &dead_fish {
+            out.push(Action::RemoveWalrus {
+                dead_fish,
+                walrus: walrus.id,
+            });
+        }
+    }
+    out
+}
+
 // ---------- ResolvingDecision (discard-down / Phase 4) ---------------------
 
+#[allow(clippy::too_many_lines, reason = "one exhaustive PendingDecisionKind match enumerating each kind's legal choices; splitting it would scatter closely-related enumeration logic across files for no readability gain")]
 fn legal_decision_actions(state: &GameState, player: PlayerId) -> Vec<Action> {
     let Some(top) = state.current_pending() else {
         return Vec::new();
@@ -711,7 +1063,7 @@ fn legal_decision_actions(state: &GameState, player: PlayerId) -> Vec<Action> {
         return Vec::new();
     }
     let p = &state.players[player as usize];
-    match top.kind {
+    match &top.kind {
         PendingDecisionKind::DiscardDown { .. } => p
             .hand
             .iter()
@@ -745,6 +1097,73 @@ fn legal_decision_actions(state: &GameState, player: PlayerId) -> Vec<Action> {
                 choice: DecisionChoice::StandUp { survivor: pc.card.id },
             })
             .collect(),
+
+        // ---------- Unit 4: events & reactions ----------------------
+        PendingDecisionKind::EventReaction { event, .. } => {
+            let mut out: Vec<Action> = p
+                .hand
+                .iter()
+                .filter(|c| matches!(c.kind, CardKind::DeadFish))
+                .map(|c| Action::ResolveDecision {
+                    choice: DecisionChoice::ReactWithDeadFish { card: c.id },
+                })
+                .collect();
+            // Fisher only negates Shark Attack / Octopus Attack, not
+            // Walrus (per `docs/greatgyre.md`'s Reactions section).
+            if *event != crate::card::EventKind::Walrus && has_fisher(p) {
+                out.extend(p.hand.iter().map(|c| Action::ResolveDecision {
+                    choice: DecisionChoice::ReactWithFisher { card: c.id },
+                }));
+            }
+            out.push(Action::ResolveDecision {
+                choice: DecisionChoice::DeclineReaction,
+            });
+            out
+        }
+        PendingDecisionKind::SharkChooseSurvivor { .. } => p
+            .placed
+            .iter()
+            .filter(|pc| matches!(pc.card.kind, CardKind::Survivor(_)))
+            .map(|pc| Action::ResolveDecision {
+                choice: DecisionChoice::LoseSurvivorToShark { survivor: pc.card.id },
+            })
+            .collect(),
+        PendingDecisionKind::OctopusRelocate { .. } => p
+            .placed
+            .iter()
+            .map(|pc| Action::ResolveDecision {
+                choice: DecisionChoice::RelocateFromOctopus { card: pc.card.id },
+            })
+            .collect(),
+        PendingDecisionKind::LoveBoatChooseSurvivor { .. } => p
+            .placed
+            .iter()
+            .filter(|pc| matches!(pc.card.kind, CardKind::Survivor(_)))
+            .map(|pc| Action::ResolveDecision {
+                choice: DecisionChoice::GiveSurvivorToLoveBoat { survivor: pc.card.id },
+            })
+            .collect(),
+        PendingDecisionKind::StormChoice { .. } => {
+            let mut out: Vec<Action> = p
+                .placed
+                .iter()
+                .map(|pc| Action::ResolveDecision {
+                    choice: DecisionChoice::StormRemoveCard { card: pc.card.id },
+                })
+                .collect();
+            out.push(Action::ResolveDecision {
+                choice: DecisionChoice::StormTakeDiscardRoute,
+            });
+            out
+        }
+        PendingDecisionKind::StormDiscard { .. } => p
+            .hand
+            .iter()
+            .filter(|c| !matches!(c.kind, CardKind::Event(_)))
+            .map(|c| Action::ResolveDecision {
+                choice: DecisionChoice::StormDiscard { card: c.id },
+            })
+            .collect(),
     }
 }
 
@@ -776,6 +1195,16 @@ fn apply_turn_action(
             apply_build_modification(state, player, card)
         }
         (Phase::Actions, Action::BuildExtension) => apply_build_extension(state, player),
+        (Phase::Actions, Action::PlayEvent { card, target }) => {
+            apply_play_event(state, player, card, target)
+        }
+        (Phase::Actions, Action::ActivateTelescope { card }) => {
+            apply_activate_telescope(state, player, card)
+        }
+        (Phase::Actions, Action::RemoveWalrus { dead_fish, walrus }) => {
+            apply_remove_walrus(state, player, dead_fish, walrus)
+        }
+        (Phase::Actions, Action::WorkDayDraw { card }) => apply_work_day_draw(state, player, card),
         (Phase::Actions, Action::FinishActions) => {
             if state.current_player != player {
                 return Err(not_your_turn(player, state.current_player));
@@ -999,7 +1428,7 @@ fn apply_play_survivor(
         return Err(not_your_turn(player, state.current_player));
     }
     let p = &state.players[player as usize];
-    if p.actions_remaining == 0 {
+    if !actions_available(p) {
         return Err(GameError::IllegalAction {
             player,
             message: "no actions remaining this turn".into(),
@@ -1026,9 +1455,7 @@ fn apply_play_survivor(
     let mut work = state.clone();
     let mut events = vec![Event::SurvivorPlayed { player, card }];
     apply_event_impl(&mut work, &events[0]);
-    if work.players[player as usize].actions_remaining == 0 {
-        events.extend(finish_actions_chain(&mut work, player));
-    }
+    events.extend(maybe_finish_actions(&mut work, player));
     Ok(events)
 }
 
@@ -1041,7 +1468,7 @@ fn apply_build_modification(
         return Err(not_your_turn(player, state.current_player));
     }
     let p = &state.players[player as usize];
-    if p.actions_remaining == 0 {
+    if !actions_available(p) {
         return Err(GameError::IllegalAction {
             player,
             message: "no actions remaining this turn".into(),
@@ -1084,9 +1511,7 @@ fn apply_build_modification(
     let built = Event::ModificationBuilt { player, card };
     apply_event_impl(&mut work, &built);
     events.push(built);
-    if work.players[player as usize].actions_remaining == 0 {
-        events.extend(finish_actions_chain(&mut work, player));
-    }
+    events.extend(maybe_finish_actions(&mut work, player));
     Ok(events)
 }
 
@@ -1095,7 +1520,7 @@ fn apply_build_extension(state: &GameState, player: PlayerId) -> Result<Vec<Even
         return Err(not_your_turn(player, state.current_player));
     }
     let p = &state.players[player as usize];
-    if p.actions_remaining == 0 {
+    if !actions_available(p) {
         return Err(GameError::IllegalAction {
             player,
             message: "no actions remaining this turn".into(),
@@ -1126,10 +1551,270 @@ fn apply_build_extension(state: &GameState, player: PlayerId) -> Result<Vec<Even
     let built = Event::ExtensionBuilt { player, extension };
     apply_event_impl(&mut work, &built);
     events.push(built);
-    if work.players[player as usize].actions_remaining == 0 {
-        events.extend(finish_actions_chain(&mut work, player));
+    events.extend(maybe_finish_actions(&mut work, player));
+    Ok(events)
+}
+
+// ---------- Unit 4: play_event / activate_telescope / remove_walrus --------
+
+/// Play an event card. Re-derives target legality from `state` rather
+/// than trusting the caller — `legal_play_event_actions` is the
+/// enumerator, this is the independent check.
+#[allow(clippy::too_many_lines, reason = "one target-legality match plus one per-kind dispatch match, both over the same small EventKind enum; splitting would separate closely related validation from its dispatch")]
+fn apply_play_event(
+    state: &GameState,
+    player: PlayerId,
+    card_id: CardInstanceId,
+    target: crate::action::EventTarget,
+) -> Result<Vec<Event>, GameError> {
+    use crate::action::EventTarget;
+    use crate::card::EventKind;
+
+    if state.current_player != player {
+        return Err(not_your_turn(player, state.current_player));
+    }
+    let p = &state.players[player as usize];
+    if !actions_available(p) {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no actions remaining this turn".into(),
+        });
+    }
+    let Some(card) = find_in_hand(&p.hand, card_id) else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("card {card_id:?} is not in {player}'s hand"),
+        });
+    };
+    let CardKind::Event(kind) = card.kind else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("card {card_id:?} is not an event card"),
+        });
+    };
+
+    match (kind, target) {
+        (EventKind::SharkAttack, EventTarget::Player { target: t }) => {
+            if t == player || survivor_count(&state.players[t as usize]) < 2 {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: format!("{t} is not a legal Shark Attack target"),
+                });
+            }
+        }
+        (EventKind::OctopusAttack, EventTarget::Player { target: t }) => {
+            if t == player || state.players[t as usize].built_extensions.is_empty() {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: format!("{t} is not a legal Octopus Attack target"),
+                });
+            }
+        }
+        (EventKind::Walrus, EventTarget::Player { target: t }) => {
+            if t == player || free_spaces(&state.players[t as usize]) == 0 {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: format!("{t} is not a legal Walrus target"),
+                });
+            }
+        }
+        (EventKind::LoveBoat, EventTarget::Player { target: t }) => {
+            if free_spaces(p) == 0 || t == player || survivor_count(&state.players[t as usize]) < 2 {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: "Love Boat requires your own free space and a target with >=2 survivors".into(),
+                });
+            }
+        }
+        (EventKind::Storm | EventKind::WorkDay, EventTarget::None) => {}
+        (EventKind::LandSighting, _) => {
+            return Err(GameError::IllegalAction {
+                player,
+                message: "Land Sighting is never played".into(),
+            });
+        }
+        _ => {
+            return Err(GameError::IllegalAction {
+                player,
+                message: format!("target shape does not match event kind {kind:?}"),
+            });
+        }
+    }
+
+    let mut work = state.clone();
+    let card_played_ev = Event::EventCardPlayed { player, card, target };
+    apply_event_impl(&mut work, &card_played_ev);
+    let mut events = vec![card_played_ev];
+
+    match kind {
+        EventKind::SharkAttack | EventKind::OctopusAttack | EventKind::Walrus => {
+            let EventTarget::Player { target: t } = target else {
+                unreachable!("validated above")
+            };
+            let held_card = (kind == EventKind::Walrus).then_some(card);
+            let ev = Event::PendingDecisionOpened {
+                player: t,
+                decision: PendingDecisionKind::EventReaction {
+                    attacker: player,
+                    event: kind,
+                    held_card,
+                },
+            };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+        }
+        EventKind::LoveBoat => {
+            let EventTarget::Player { target: t } = target else {
+                unreachable!("validated above")
+            };
+            let ev = Event::PendingDecisionOpened {
+                player: t,
+                decision: PendingDecisionKind::LoveBoatChooseSurvivor { attacker: player },
+            };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+        }
+        EventKind::Storm => {
+            let order = storm_order(state.players.len(), player);
+            if let Some((&first, rest)) = order.split_first() {
+                let ev = Event::PendingDecisionOpened {
+                    player: first,
+                    decision: PendingDecisionKind::StormChoice {
+                        attacker: player,
+                        queue_tail: rest.to_vec(),
+                    },
+                };
+                apply_event_impl(&mut work, &ev);
+                events.push(ev);
+            } else {
+                // Unreachable under num_players >= 2, but harmless if
+                // it ever weren't: nobody else to resolve against.
+                events.extend(maybe_finish_actions(&mut work, player));
+            }
+        }
+        EventKind::WorkDay => {
+            let ev = Event::WorkDayActivated { player };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+            events.extend(maybe_finish_actions(&mut work, player));
+        }
+        EventKind::LandSighting => unreachable!("rejected above"),
     }
     Ok(events)
+}
+
+fn apply_activate_telescope(
+    state: &GameState,
+    player: PlayerId,
+    card_id: CardInstanceId,
+) -> Result<Vec<Event>, GameError> {
+    if state.current_player != player {
+        return Err(not_your_turn(player, state.current_player));
+    }
+    let p = &state.players[player as usize];
+    if !actions_available(p) {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no actions remaining this turn".into(),
+        });
+    }
+    let Some(telescope) = p.placed.iter().find(|pc| {
+        pc.card.id == card_id
+            && matches!(
+                pc.card.kind,
+                CardKind::Modification(crate::card::ModificationKind::Telescope)
+            )
+    }) else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("{card_id:?} is not a built Telescope on {player}'s raft"),
+        });
+    };
+    let telescope = telescope.card;
+    let Some(drawn) = state.event_deck.last().copied() else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "the Event Deck is empty".into(),
+        });
+    };
+    let mut work = state.clone();
+    let ev = Event::TelescopeActivated {
+        player,
+        telescope,
+        drawn,
+    };
+    apply_event_impl(&mut work, &ev);
+    let mut events = vec![ev];
+    events.extend(maybe_finish_actions(&mut work, player));
+    Ok(events)
+}
+
+fn apply_remove_walrus(
+    state: &GameState,
+    player: PlayerId,
+    dead_fish_id: CardInstanceId,
+    walrus_id: CardInstanceId,
+) -> Result<Vec<Event>, GameError> {
+    if state.current_player != player {
+        return Err(not_your_turn(player, state.current_player));
+    }
+    let p = &state.players[player as usize];
+    if !actions_available(p) {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no actions remaining this turn".into(),
+        });
+    }
+    let Some(dead_fish) = find_in_hand(&p.hand, dead_fish_id).filter(|c| matches!(c.kind, CardKind::DeadFish)) else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("{dead_fish_id:?} is not a Dead Fish in {player}'s hand"),
+        });
+    };
+    let Some(walrus) = p.blocked_by_walrus.iter().find(|c| c.id == walrus_id).copied() else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("{walrus_id:?} is not blocking a space on {player}'s raft"),
+        });
+    };
+    let mut work = state.clone();
+    let ev = Event::WalrusRemoved {
+        player,
+        dead_fish,
+        walrus,
+    };
+    apply_event_impl(&mut work, &ev);
+    let mut events = vec![ev];
+    events.extend(maybe_finish_actions(&mut work, player));
+    Ok(events)
+}
+
+fn apply_work_day_draw(
+    state: &GameState,
+    player: PlayerId,
+    card_id: CardInstanceId,
+) -> Result<Vec<Event>, GameError> {
+    if state.current_player != player {
+        return Err(not_your_turn(player, state.current_player));
+    }
+    let p = &state.players[player as usize];
+    if !p.work_day_active {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "Work Day is not active this turn".into(),
+        });
+    }
+    let Some(entry) = p.current.iter().find(|c| c.card.id == card_id) else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("card {card_id:?} is not in {player}'s own Current"),
+        });
+    };
+    let card = entry.card;
+    let mut work = state.clone();
+    let ev = Event::WorkDayDrew { player, card };
+    apply_event_impl(&mut work, &ev);
+    Ok(vec![ev])
 }
 
 /// End Phase 3: emit the marker event, then either open a hand-limit
@@ -1282,7 +1967,48 @@ fn apply_resolve_decision(
             message: format!("pending decision belongs to {}, not {player}", top.player),
         });
     }
-    let kind = top.kind;
+    let kind = top.kind.clone();
+    match kind {
+        PendingDecisionKind::DiscardDown { .. }
+        | PendingDecisionKind::MakeHungry { .. }
+        | PendingDecisionKind::AbandonHungry { .. }
+        | PendingDecisionKind::StandUp { .. } => apply_resolve_u2_decision(state, player, &kind, choice),
+        PendingDecisionKind::EventReaction {
+            attacker,
+            event,
+            held_card,
+        } => apply_event_reaction_choice(state, player, attacker, event, held_card, choice),
+        PendingDecisionKind::SharkChooseSurvivor { attacker } => {
+            apply_shark_choose_survivor(state, player, attacker, choice)
+        }
+        PendingDecisionKind::OctopusRelocate { attacker, .. } => {
+            apply_octopus_relocate_choice(state, player, attacker, choice)
+        }
+        PendingDecisionKind::LoveBoatChooseSurvivor { attacker } => {
+            apply_love_boat_choose_survivor(state, player, attacker, choice)
+        }
+        PendingDecisionKind::StormChoice {
+            attacker,
+            queue_tail,
+        } => apply_storm_choice(state, player, attacker, queue_tail, choice),
+        PendingDecisionKind::StormDiscard {
+            attacker,
+            queue_tail,
+            ..
+        } => apply_storm_discard_choice(state, player, attacker, queue_tail, choice),
+    }
+}
+
+/// The four Unit 2 decision kinds: hand-limit discard and Phase-4
+/// hungry/stand-up. Unchanged from Unit 2 except for the `kind` clone
+/// (`PendingDecisionKind` lost `Copy` once Storm's `Vec<PlayerId>`
+/// payload was added in Unit 4).
+fn apply_resolve_u2_decision(
+    state: &GameState,
+    player: PlayerId,
+    kind: &PendingDecisionKind,
+    choice: DecisionChoice,
+) -> Result<Vec<Event>, GameError> {
     let p = &state.players[player as usize];
     let core_event = match (kind, choice) {
         (PendingDecisionKind::DiscardDown { .. }, DecisionChoice::Discard { card }) => {
@@ -1344,9 +2070,411 @@ fn apply_resolve_decision(
             | PendingDecisionKind::StandUp { .. } => {
                 events.extend(end_of_turn_chain(&mut work, player));
             }
+            _ => unreachable!("apply_resolve_u2_decision is only called with a Unit-2 decision kind"),
         }
     }
     Ok(events)
+}
+
+// ---------- Unit 4: event reaction / effect decision resolution ------------
+
+/// `player` (the target) answers the reaction window opened by
+/// `attacker`'s Shark/Octopus/Walrus play.
+fn apply_event_reaction_choice(
+    state: &GameState,
+    player: PlayerId,
+    attacker: PlayerId,
+    event_kind: crate::card::EventKind,
+    held_card: Option<Card>,
+    choice: DecisionChoice,
+) -> Result<Vec<Event>, GameError> {
+    let p = &state.players[player as usize];
+    let mut work = state.clone();
+    let mut events = Vec::new();
+
+    let negated = match choice {
+        DecisionChoice::DeclineReaction => {
+            let ev = Event::ReactionDeclined { player };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+            false
+        }
+        DecisionChoice::ReactWithDeadFish { card } => {
+            let card = find_in_hand(&p.hand, card)
+                .filter(|c| matches!(c.kind, CardKind::DeadFish))
+                .ok_or_else(|| GameError::IllegalAction {
+                    player,
+                    message: "card is not a Dead Fish in hand".into(),
+                })?;
+            let ev = Event::ReactedWithDeadFish { player, card };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+            true
+        }
+        DecisionChoice::ReactWithFisher { card } => {
+            if event_kind == crate::card::EventKind::Walrus {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: "Fisher does not negate Walrus".into(),
+                });
+            }
+            if !has_fisher(p) {
+                return Err(GameError::IllegalAction {
+                    player,
+                    message: "no Fisher on this player's raft".into(),
+                });
+            }
+            let card = find_in_hand(&p.hand, card).ok_or_else(|| GameError::IllegalAction {
+                player,
+                message: format!("card {card:?} is not in {player}'s hand"),
+            })?;
+            let ev = Event::ReactedWithFisher { player, card };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+            true
+        }
+        _ => {
+            return Err(GameError::IllegalAction {
+                player,
+                message: "expected a reaction choice (Dead Fish, Fisher, or decline)".into(),
+            });
+        }
+    };
+
+    // `EventReaction` is a single-shot decision; the reaction event
+    // applied just above (`ReactionDeclined` / `ReactedWithDeadFish` /
+    // `ReactedWithFisher`) already popped it via `pop_pending` — that's
+    // *in* the event's own `apply_event`, so replay reproduces it too
+    // (a bare `work.pending_decisions.pop()` here would only mutate
+    // this throwaway clone, never the real state — the bug this
+    // helper's doc comment describes).
+
+    if negated {
+        if let Some(walrus_card) = held_card {
+            let ev = Event::WalrusDiscarded {
+                player: attacker,
+                card: walrus_card,
+            };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+        }
+        events.extend(resume_actions_chain(&mut work, attacker));
+        return Ok(events);
+    }
+
+    match event_kind {
+        crate::card::EventKind::SharkAttack => {
+            let ev = Event::PendingDecisionOpened {
+                player,
+                decision: PendingDecisionKind::SharkChooseSurvivor { attacker },
+            };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+        }
+        crate::card::EventKind::OctopusAttack => {
+            events.extend(apply_octopus_effect(&mut work, player, attacker));
+        }
+        crate::card::EventKind::Walrus => {
+            let walrus_card = held_card.expect("Walrus's EventReaction always carries held_card");
+            let ev = Event::WalrusPlaced {
+                player,
+                attacker,
+                card: walrus_card,
+            };
+            apply_event_impl(&mut work, &ev);
+            events.push(ev);
+            events.extend(resume_actions_chain(&mut work, attacker));
+        }
+        _ => unreachable!("only Shark/Octopus/Walrus open an EventReaction decision"),
+    }
+    Ok(events)
+}
+
+/// Octopus Attack's non-reaction-window effect: lose one (fungible)
+/// extension, then — if that drops capacity below current occupancy —
+/// open the relocation decision.
+fn apply_octopus_effect(work: &mut GameState, player: PlayerId, attacker: PlayerId) -> Vec<Event> {
+    let idx = player as usize;
+    let extension = work.players[idx]
+        .built_extensions
+        .last()
+        .copied()
+        .expect("OctopusAttack was only legal because the target has >=1 extension");
+    let ev = Event::ExtensionLostToOctopus { player, extension };
+    apply_event_impl(work, &ev);
+    let mut events = vec![ev];
+
+    let (used, total) = crate::turns::raft_capacity(&work.players[idx]);
+    let deficit = used.saturating_sub(total);
+    if deficit > 0 {
+        let placed_len = u32::try_from(work.players[idx].placed.len()).unwrap_or(u32::MAX);
+        let needed = u8::try_from(deficit.min(placed_len)).unwrap_or(u8::MAX);
+        if needed > 0 {
+            let ev = Event::PendingDecisionOpened {
+                player,
+                decision: PendingDecisionKind::OctopusRelocate { needed, attacker },
+            };
+            apply_event_impl(work, &ev);
+            events.push(ev);
+            return events;
+        }
+    }
+    events.extend(resume_actions_chain(work, attacker));
+    events
+}
+
+fn apply_shark_choose_survivor(
+    state: &GameState,
+    player: PlayerId,
+    attacker: PlayerId,
+    choice: DecisionChoice,
+) -> Result<Vec<Event>, GameError> {
+    let DecisionChoice::LoseSurvivorToShark { survivor } = choice else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "expected LoseSurvivorToShark".into(),
+        });
+    };
+    let p = &state.players[player as usize];
+    let card = p
+        .placed
+        .iter()
+        .find(|pc| pc.card.id == survivor && matches!(pc.card.kind, CardKind::Survivor(_)))
+        .map(|pc| pc.card)
+        .ok_or_else(|| GameError::IllegalAction {
+            player,
+            message: format!("survivor {survivor:?} is not on {player}'s raft"),
+        })?;
+    let mut work = state.clone();
+    let ev = Event::SurvivorLostToShark { player, survivor: card };
+    apply_event_impl(&mut work, &ev); // also pops the SharkChooseSurvivor decision
+    let mut events = vec![ev];
+    events.extend(resume_actions_chain(&mut work, attacker));
+    Ok(events)
+}
+
+fn apply_octopus_relocate_choice(
+    state: &GameState,
+    player: PlayerId,
+    attacker: PlayerId,
+    choice: DecisionChoice,
+) -> Result<Vec<Event>, GameError> {
+    let DecisionChoice::RelocateFromOctopus { card } = choice else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "expected RelocateFromOctopus".into(),
+        });
+    };
+    let p = &state.players[player as usize];
+    let found = p
+        .placed
+        .iter()
+        .find(|pc| pc.card.id == card)
+        .map(|pc| pc.card)
+        .ok_or_else(|| GameError::IllegalAction {
+            player,
+            message: format!("card {card:?} is not on {player}'s raft"),
+        })?;
+    let mut work = state.clone();
+    let ev = Event::RelocatedFromOctopus { player, card: found };
+    apply_event_impl(&mut work, &ev);
+    let mut events = vec![ev];
+    if work.pending_decisions.is_empty() {
+        events.extend(resume_actions_chain(&mut work, attacker));
+    }
+    Ok(events)
+}
+
+fn apply_love_boat_choose_survivor(
+    state: &GameState,
+    player: PlayerId,
+    attacker: PlayerId,
+    choice: DecisionChoice,
+) -> Result<Vec<Event>, GameError> {
+    let DecisionChoice::GiveSurvivorToLoveBoat { survivor } = choice else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "expected GiveSurvivorToLoveBoat".into(),
+        });
+    };
+    let p = &state.players[player as usize];
+    let card = p
+        .placed
+        .iter()
+        .find(|pc| pc.card.id == survivor && matches!(pc.card.kind, CardKind::Survivor(_)))
+        .map(|pc| pc.card)
+        .ok_or_else(|| GameError::IllegalAction {
+            player,
+            message: format!("survivor {survivor:?} is not on {player}'s raft"),
+        })?;
+    let mut work = state.clone();
+    let ev = Event::SurvivorGivenToLoveBoat {
+        player,
+        recipient: attacker,
+        survivor: card,
+    };
+    apply_event_impl(&mut work, &ev); // also pops the LoveBoatChooseSurvivor decision
+    let mut events = vec![ev];
+    events.extend(resume_actions_chain(&mut work, attacker));
+    Ok(events)
+}
+
+fn apply_storm_choice(
+    state: &GameState,
+    player: PlayerId,
+    attacker: PlayerId,
+    queue_tail: Vec<PlayerId>,
+    choice: DecisionChoice,
+) -> Result<Vec<Event>, GameError> {
+    let mut work = state.clone();
+    let mut events = Vec::new();
+    match choice {
+        DecisionChoice::StormRemoveCard { card } => {
+            let p = &state.players[player as usize];
+            let found = p
+                .placed
+                .iter()
+                .find(|pc| pc.card.id == card)
+                .map(|pc| pc.card)
+                .ok_or_else(|| GameError::IllegalAction {
+                    player,
+                    message: format!("card {card:?} is not on {player}'s raft"),
+                })?;
+            let ev = Event::StormCardRemoved { player, card: found };
+            apply_event_impl(&mut work, &ev); // also pops the StormChoice decision
+            events.push(ev);
+            events.extend(advance_storm_or_finish(&mut work, attacker, queue_tail));
+        }
+        DecisionChoice::StormTakeDiscardRoute => {
+            let ev = Event::StormDiscardRouteTaken { player };
+            apply_event_impl(&mut work, &ev); // also pops the StormChoice decision
+            events.push(ev);
+            let eligible: Vec<Card> = work.players[player as usize]
+                .hand
+                .iter()
+                .filter(|c| !matches!(c.kind, CardKind::Event(_)))
+                .copied()
+                .collect();
+            if eligible.len() > 2 {
+                // A real choice: which 2 of >2 eligible cards.
+                let ev2 = Event::PendingDecisionOpened {
+                    player,
+                    decision: PendingDecisionKind::StormDiscard {
+                        needed: 2,
+                        attacker,
+                        queue_tail: queue_tail.clone(),
+                    },
+                };
+                apply_event_impl(&mut work, &ev2);
+                events.push(ev2);
+            } else {
+                // Forced: discard every eligible card (0, 1, or exactly
+                // 2) — no real choice of *which*, so no decision needed,
+                // matching the Phase-4 hungry/stand-up forced-case
+                // pattern ("discard what they can").
+                for c in eligible {
+                    let ev3 = Event::CardDiscarded { player, card: c };
+                    apply_event_impl(&mut work, &ev3);
+                    events.push(ev3);
+                }
+                events.extend(advance_storm_or_finish(&mut work, attacker, queue_tail));
+            }
+        }
+        _ => {
+            return Err(GameError::IllegalAction {
+                player,
+                message: "expected a Storm choice (remove a card, or take the discard route)".into(),
+            });
+        }
+    }
+    Ok(events)
+}
+
+fn apply_storm_discard_choice(
+    state: &GameState,
+    player: PlayerId,
+    attacker: PlayerId,
+    queue_tail: Vec<PlayerId>,
+    choice: DecisionChoice,
+) -> Result<Vec<Event>, GameError> {
+    let DecisionChoice::StormDiscard { card } = choice else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "expected StormDiscard".into(),
+        });
+    };
+    let p = &state.players[player as usize];
+    let card = find_in_hand(&p.hand, card)
+        .filter(|c| !matches!(c.kind, CardKind::Event(_)))
+        .ok_or_else(|| GameError::IllegalAction {
+            player,
+            message: format!("card {card:?} is not an eligible (non-event) hand card"),
+        })?;
+    let mut work = state.clone();
+    // Reuses `CardDiscarded` (hand -> own Current, face-down) — the
+    // effect is identical to hand-limit discard-down.
+    let ev = Event::CardDiscarded { player, card };
+    apply_event_impl(&mut work, &ev);
+    let mut events = vec![ev];
+    if work.pending_decisions.is_empty() {
+        events.extend(advance_storm_or_finish(&mut work, attacker, queue_tail));
+    }
+    Ok(events)
+}
+
+/// Move Storm's around-the-table resolution to the next player in
+/// `queue_tail`, or (empty) return control to `attacker`.
+fn advance_storm_or_finish(
+    work: &mut GameState,
+    attacker: PlayerId,
+    mut queue_tail: Vec<PlayerId>,
+) -> Vec<Event> {
+    if queue_tail.is_empty() {
+        return resume_actions_chain(work, attacker);
+    }
+    let next = queue_tail.remove(0);
+    let ev = Event::PendingDecisionOpened {
+        player: next,
+        decision: PendingDecisionKind::StormChoice {
+            attacker,
+            queue_tail,
+        },
+    };
+    apply_event_impl(work, &ev);
+    vec![ev]
+}
+
+/// Whether `player` may take a Phase-3 action right now: either a
+/// normal action remains, or Work Day made this turn's actions
+/// unlimited.
+fn actions_available(p: &crate::state::PlayerState) -> bool {
+    p.work_day_active || p.actions_remaining > 0
+}
+
+/// After a Phase-3 action that didn't open an interrupt (a build, a
+/// survivor play, Work Day's own activation, Telescope, Walrus
+/// removal): if the action budget just hit 0 and Work Day isn't
+/// active, auto-transition out of Phase 3 exactly like Unit 2's
+/// direct actions did. No-op (and no `EventResolved`) otherwise —
+/// unlike `resume_actions_chain`, this never left `Phase::Actions`.
+fn maybe_finish_actions(work: &mut GameState, player: PlayerId) -> Vec<Event> {
+    if actions_available(&work.players[player as usize]) {
+        Vec::new()
+    } else {
+        finish_actions_chain(work, player)
+    }
+}
+
+/// The event-interrupt chain (reaction + effect, or the multi-player
+/// Storm chain) fully resolved: return `attacker` to `Phase::Actions`
+/// and, if their budget is now exhausted, continue straight into the
+/// same end-of-Phase-3 chain a direct action would have triggered.
+fn resume_actions_chain(work: &mut GameState, attacker: PlayerId) -> Vec<Event> {
+    let ev = Event::EventResolved { player: attacker };
+    apply_event_impl(work, &ev);
+    let mut events = vec![ev];
+    events.extend(maybe_finish_actions(work, attacker));
+    events
 }
 
 fn find_standing_survivor(p: &crate::state::PlayerState, id: CardInstanceId) -> Option<Card> {

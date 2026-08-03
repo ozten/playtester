@@ -12,8 +12,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::card::{CardInstanceId, SurvivorId};
 
+/// Target selection for [`Action::PlayEvent`]. Shark Attack, Octopus
+/// Attack, Walrus, and Love Boat each target exactly one other player
+/// (the card's own legality — e.g. "≥2 survivors" — is checked at
+/// apply time, not encoded here). Storm and Work Day take no target
+/// (Storm affects every other player in turn order; Work Day affects
+/// only the caster).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EventTarget {
+    Player { target: PlayerId },
+    None,
+}
+
 /// Answers to an open [`crate::state::PendingDecision`]. Each variant
-/// resolves exactly one unit of the decision's `needed` counter.
+/// resolves exactly one unit of the decision's `needed` counter (or,
+/// for the Unit 4 single-shot decision kinds, the whole decision).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DecisionChoice {
@@ -25,6 +39,32 @@ pub enum DecisionChoice {
     AbandonHungry { survivor: CardInstanceId },
     /// Stand this Hungry survivor back up.
     StandUp { survivor: CardInstanceId },
+
+    // ---------- Unit 4: events & reactions --------------------------
+    /// Negate the pending Shark/Octopus/Walrus attack by discarding
+    /// this Dead Fish from hand.
+    ReactWithDeadFish { card: CardInstanceId },
+    /// Negate the pending Shark/Octopus attack (Fisher's ability) by
+    /// discarding this (any) hand card.
+    ReactWithFisher { card: CardInstanceId },
+    /// Take the attack's effect instead of reacting.
+    DeclineReaction,
+    /// Shark Attack: give up this placed survivor to the shared
+    /// Discard Pile.
+    LoseSurvivorToShark { survivor: CardInstanceId },
+    /// Octopus Attack capacity shortfall: send this placed card to
+    /// your own Current, face-up.
+    RelocateFromOctopus { card: CardInstanceId },
+    /// Love Boat: give this placed survivor to the caster.
+    GiveSurvivorToLoveBoat { survivor: CardInstanceId },
+    /// Storm: remove this placed card to your own Current, face-up.
+    StormRemoveCard { card: CardInstanceId },
+    /// Storm: take the "discard non-event hand cards" route instead
+    /// of removing a placed card.
+    StormTakeDiscardRoute,
+    /// Storm, discard route: discard this (non-event) hand card
+    /// face-down to your own Current.
+    StormDiscard { card: CardInstanceId },
 }
 
 /// Every intent an agent can express.
@@ -69,6 +109,24 @@ pub enum Action {
     /// Rope + 1 Plastic from hand and taking one instance from the
     /// shared extension pile.
     BuildExtension,
+    /// `Phase::Actions`: play an event card from hand. `target` names
+    /// the other player, for the events that need one.
+    PlayEvent {
+        card: CardInstanceId,
+        target: EventTarget,
+    },
+    /// `Phase::Actions`: discard a built Telescope to draw 1 Event
+    /// card from the Event Deck into hand.
+    ActivateTelescope { card: CardInstanceId },
+    /// `Phase::Actions`: discard a Dead Fish from hand to remove a
+    /// Walrus blocking one of this player's own spaces.
+    RemoveWalrus {
+        dead_fish: CardInstanceId,
+        walrus: CardInstanceId,
+    },
+    /// `Phase::Actions`, Work Day only: draw a card from your own
+    /// Current for free (doesn't consume a Phase-2-style draw budget).
+    WorkDayDraw { card: CardInstanceId },
     /// `Phase::Actions`: stop taking actions early (always legal).
     FinishActions,
 

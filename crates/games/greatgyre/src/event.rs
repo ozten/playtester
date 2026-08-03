@@ -8,14 +8,18 @@
 use playtest_core::{EndReason, PlayerId};
 use serde::{Deserialize, Serialize};
 
+use crate::action::EventTarget;
 use crate::card::Card;
 use crate::state::PendingDecisionKind;
 
-/// One player's final hope total, for the `end_game` event.
+/// One player's final score, for the `end_game` event: hope icons on
+/// face-up raft cards, `+15` if Land Sighting is in hand, `-5` per
+/// other player's Influencer. Signed — a heavy Influencer penalty can
+/// in principle outweigh a small hope total.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScoreRow {
     pub player: PlayerId,
-    pub hope: u32,
+    pub hope: i32,
 }
 
 /// Every observable change to a Great Gyre game.
@@ -118,6 +122,81 @@ pub enum Event {
     /// Phase 5 (auto): every Current passed to the left neighbor,
     /// preserving face state, and the First Player token passed left.
     CurrentsPassed { new_first_player: PlayerId },
+
+    // ---------- Unit 4: events & reactions --------------------------
+    /// `player` played `card` from hand, targeting `target`. Moves the
+    /// card from hand to the shared Discard Pile — *except* Walrus,
+    /// which is held (identified by `Event::PendingDecisionOpened`'s
+    /// `EventReaction::held_card`) until the reaction resolves, since
+    /// its card physically ends up on a raft, not the discard pile.
+    EventCardPlayed {
+        player: PlayerId,
+        card: Card,
+        target: EventTarget,
+    },
+    /// The event's target declined to react (or has no reaction
+    /// available); the attack proceeds.
+    ReactionDeclined { player: PlayerId },
+    /// The event's target discarded a Dead Fish to negate the attack.
+    ReactedWithDeadFish { player: PlayerId, card: Card },
+    /// The event's target (Fisher) discarded a hand card to negate
+    /// the attack.
+    ReactedWithFisher { player: PlayerId, card: Card },
+    /// A Walrus was placed on `player`'s raft by `attacker`,
+    /// occupying (blocking) one space.
+    WalrusPlaced {
+        player: PlayerId,
+        attacker: PlayerId,
+        card: Card,
+    },
+    /// A reaction negated a Walrus play; `player` (the would-be
+    /// attacker) never gets to place it — it goes straight to the
+    /// shared Discard Pile instead.
+    WalrusDiscarded { player: PlayerId, card: Card },
+    /// `player` discarded a Dead Fish to remove a Walrus blocking one
+    /// of their own spaces.
+    WalrusRemoved {
+        player: PlayerId,
+        dead_fish: Card,
+        walrus: Card,
+    },
+    /// Shark Attack: `player` gave up `survivor` to the shared Discard Pile.
+    SurvivorLostToShark { player: PlayerId, survivor: Card },
+    /// Octopus Attack: `player` lost `extension` back to the shared pile.
+    ExtensionLostToOctopus { player: PlayerId, extension: Card },
+    /// Octopus Attack capacity shortfall: `card` moved from `player`'s
+    /// raft to their own Current, face-up.
+    RelocatedFromOctopus { player: PlayerId, card: Card },
+    /// Love Boat: `player` gave `survivor` to `recipient`; it moves
+    /// straight onto `recipient`'s raft.
+    SurvivorGivenToLoveBoat {
+        player: PlayerId,
+        recipient: PlayerId,
+        survivor: Card,
+    },
+    /// Storm: `player` removed `card` from their raft to their own
+    /// Current, face-up.
+    StormCardRemoved { player: PlayerId, card: Card },
+    /// Storm: `player` took the discard route (no further state
+    /// change by itself; a `StormDiscard` pending decision may follow
+    /// if they hold any non-event hand cards).
+    StormDiscardRouteTaken { player: PlayerId },
+    /// Work Day: unlimited actions and free own-Current draws are now
+    /// active for `player`'s current turn.
+    WorkDayActivated { player: PlayerId },
+    /// Work Day: `player` drew `card` from their own Current for free
+    /// (doesn't touch `draws_remaining`).
+    WorkDayDrew { player: PlayerId, card: Card },
+    /// `player` discarded a built Telescope to draw `drawn` from the
+    /// Event Deck into hand.
+    TelescopeActivated {
+        player: PlayerId,
+        telescope: Card,
+        drawn: Card,
+    },
+    /// The current event-interrupt chain (reaction + effect) fully
+    /// resolved; control returns to `player`'s `Phase::Actions`.
+    EventResolved { player: PlayerId },
 
     /// The game ended.
     EndGame {

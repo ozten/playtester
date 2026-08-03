@@ -8,7 +8,7 @@
 use playtest_core::PlayerId;
 use serde::{Deserialize, Serialize};
 
-use crate::card::Card;
+use crate::card::{Card, EventKind};
 use crate::config::GreatGyreConfig;
 
 /// Whether a Current-pile card is showing its face or not. Face-down
@@ -44,8 +44,9 @@ pub struct PlacedCard {
 /// Modeled as a "pick one of N, repeat until satisfied" counter rather
 /// than a single combinatorial action, so `legal_actions` stays a flat,
 /// boundedly-sized list (per plan: the pending-decision stack pattern
-/// from ShipWreck's `ResolvingEvent`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// from ShipWreck's `ResolvingEvent`). Not `Copy` — Storm's
+/// `queue_tail` carries a `Vec<PlayerId>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PendingDecisionKind {
     /// Discard `needed` more hand cards (face-down to own Current) to
@@ -61,23 +62,75 @@ pub enum PendingDecisionKind {
     /// Stand up `needed` more Hungry survivors (food surplus, fewer
     /// than the full Hungry count).
     StandUp { needed: u8 },
+
+    // ---------- Unit 4: events & reactions --------------------------
+    /// `attacker` played a negatable event (Shark/Octopus/Walrus)
+    /// against this player. `held_card` is `Some` only for Walrus
+    /// (which doesn't discard on play — it's held here until the
+    /// reaction resolves one way or the other); `None` for Shark/
+    /// Octopus (already discarded at play time).
+    EventReaction {
+        attacker: PlayerId,
+        event: EventKind,
+        held_card: Option<Card>,
+    },
+    /// Shark Attack landed: this player chooses which placed survivor
+    /// to lose (to the shared Discard Pile).
+    SharkChooseSurvivor { attacker: PlayerId },
+    /// Octopus Attack landed and capacity now falls `needed` short of
+    /// occupancy (the fungible-capacity reading of "cards on the lost
+    /// spaces relocate" — see `docs/greatgyre.md`'s `[A]` rulings in
+    /// the engine report): this player picks `needed` placed cards to
+    /// send to their own Current, face-up.
+    OctopusRelocate { needed: u8, attacker: PlayerId },
+    /// Love Boat landed: this player chooses which placed survivor to
+    /// give to `attacker`.
+    LoveBoatChooseSurvivor { attacker: PlayerId },
+    /// Storm: this player chooses to remove one placed card (face-up
+    /// to their own Current) or discard non-event hand cards.
+    /// `queue_tail` is who's left to decide after this player, in
+    /// down-current order.
+    StormChoice {
+        attacker: PlayerId,
+        queue_tail: Vec<PlayerId>,
+    },
+    /// Storm, discard route: discard `needed` more non-event hand
+    /// cards (face-down to this player's own Current); `needed` is
+    /// already clamped to however many non-event cards they hold.
+    StormDiscard {
+        needed: u8,
+        attacker: PlayerId,
+        queue_tail: Vec<PlayerId>,
+    },
 }
 
 impl PendingDecisionKind {
     /// How many more picks this decision needs before it's satisfied.
+    /// Only meaningful for the "pick N of M, repeat" kinds; the
+    /// single-shot Unit 4 kinds (`EventReaction`,
+    /// `SharkChooseSurvivor`, `LoveBoatChooseSurvivor`, `StormChoice`)
+    /// resolve via bespoke logic in `rules.rs` rather than this
+    /// counter, so they report `0` (unused).
     #[must_use]
-    pub const fn needed(self) -> u8 {
+    pub const fn needed(&self) -> u8 {
         match self {
             Self::DiscardDown { needed }
             | Self::MakeHungry { needed }
             | Self::AbandonHungry { needed }
-            | Self::StandUp { needed } => needed,
+            | Self::StandUp { needed }
+            | Self::OctopusRelocate { needed, .. }
+            | Self::StormDiscard { needed, .. } => *needed,
+            Self::EventReaction { .. }
+            | Self::SharkChooseSurvivor { .. }
+            | Self::LoveBoatChooseSurvivor { .. }
+            | Self::StormChoice { .. } => 0,
         }
     }
 }
 
-/// One entry on the pending-decision stack.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// One entry on the pending-decision stack. Not `Copy` — see
+/// `PendingDecisionKind`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingDecision {
     pub player: PlayerId,
     pub kind: PendingDecisionKind,
@@ -119,6 +172,7 @@ pub enum Phase {
 }
 
 /// Per-seat state.
+#[allow(clippy::struct_excessive_bools, reason = "each bool is an independent once-per-turn usage flag (Porter/Swimmer/Pirate/Work Day); they don't combine into meaningful states worth an enum")]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerState {
     /// Hidden hand: survivors, modifications, resources, and (inert in
@@ -152,6 +206,18 @@ pub struct PlayerState {
     /// card from another hand" substitute source this Phase 2. Reset
     /// at `TurnStarted`.
     pub pirate_used: bool,
+    /// Walrus cards currently blocking a space on *this* player's
+    /// raft (placed there by another player's Walrus event). Each
+    /// blocks exactly 1 space — tracked as distinct entries per the
+    /// plan's design decision, unlike the fungible survivor/
+    /// modification occupancy count. Cleared by discarding a Dead
+    /// Fish (`Action::RemoveWalrus`).
+    pub blocked_by_walrus: Vec<Card>,
+    /// Whether Work Day is active for this player's *current* turn:
+    /// unlimited Phase-3 actions, and drawing from their own Current
+    /// becomes a free repeatable Phase-3 action. Reset to `false` at
+    /// `TurnStarted`.
+    pub work_day_active: bool,
 }
 
 impl PlayerState {
@@ -169,6 +235,8 @@ impl PlayerState {
             porter_used: false,
             swimmer_used: false,
             pirate_used: false,
+            blocked_by_walrus: Vec::new(),
+            work_day_active: false,
         }
     }
 }
