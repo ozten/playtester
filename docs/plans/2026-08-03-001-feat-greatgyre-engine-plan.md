@@ -71,6 +71,4 @@ Design decisions already made (do not relitigate):
   10k-game `#[ignore]` soak, determinism byte-identity check,
   `heuristic beats random` sanity (>70% target). Commit: `c14ae62`.
 - [x] **U6 — docs.** README game table row, `docs/api-contract.md`
-  greatgyre note (4-seat example), BENCHMARKS entry. Commit:
-  `<pending>` (this unit's own commit — see `git log` for the actual
-  hash of "docs(greatgyre): U6 — README, api-contract, BENCHMARKS").
+  greatgyre note (4-seat example), BENCHMARKS entry. Commit: `4385af3`.
