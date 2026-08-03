@@ -7,6 +7,7 @@
 //! plan), so `PlaySurvivor` / `BuildModification` don't take a slot
 //! either — legality is a capacity check, not a placement choice.
 
+use playtest_core::PlayerId;
 use serde::{Deserialize, Serialize};
 
 use crate::card::{CardInstanceId, SurvivorId};
@@ -38,6 +39,23 @@ pub enum Action {
     /// face-down picks) is revealed by the resulting event, not the
     /// action.
     DrawFromCurrent { card: CardInstanceId },
+    /// `Phase::Draw`, Porter only: draw the top of the shared Discard
+    /// Pile instead of a normal draw. Substitutes for (consumes) one
+    /// of the player's draws; usable at most once per Phase 2.
+    DrawFromDiscardPile,
+    /// `Phase::Draw`, Swimmer only: draw a chosen card from an
+    /// adjacent player's Current instead of a normal draw. Face-down
+    /// picks are blind — the identity is revealed by the resulting
+    /// event, not the action. Usable at most once per Phase 2.
+    DrawFromAdjacentCurrent {
+        neighbor: PlayerId,
+        card: CardInstanceId,
+    },
+    /// `Phase::Draw`, Pirate only: draw a uniformly-random card from
+    /// `target`'s hand instead of a normal draw. The player picks
+    /// *whom* to steal from; which card is chance-resolved (see
+    /// `Phase::AwaitingPirateSteal`). Usable at most once per Phase 2.
+    DrawRandomFromHand { target: PlayerId },
     /// `Phase::Draw`: stop drawing early (always legal).
     FinishDrawing,
 

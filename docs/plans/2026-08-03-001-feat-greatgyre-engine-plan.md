@@ -52,11 +52,12 @@ Design decisions already made (do not relitigate):
   random-self-play soak (1k games, no panics, all games terminate).
   Commit: `5d7f5f7`.
  
-- [ ] **U3 — abilities & modifiers.** Stat aggregation from raft
+- [x] **U3 — abilities & modifiers.** Stat aggregation from raft
   (add/draw/action/hand-size/food), Purser/First Mate/Athlete/Millionaire/
   Survivalist/Swimmer(+1 food)/Stowaway(no space)/Quarterdeck(net +1),
   special draw sources (Porter discard-top, Swimmer adjacent Current,
   Pirate chance steal), Fishing Rod/Telescope hand-size effects.
+  Commit: `<pending>` (filled in below).
  
 - [ ] **U4 — events & reactions.** Event deck + play-event action +
   targeting legality, Shark/Octopus/Walrus (+removal action)/Love Boat/

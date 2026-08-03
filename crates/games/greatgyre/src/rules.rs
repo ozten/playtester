@@ -6,17 +6,23 @@
 //! and `setup.rs`'s doc comment for why the shuffle can't happen inside
 //! `initial_state`).
 //!
-//! Unit 2 (this unit) lands the five-phase turn machine:
-//! `Phase::Draw` (Phase 2), `Phase::Actions` (Phase 3), and
-//! `Phase::ResolvingDecision` (hand-limit discard-down and Phase 4
-//! hungry/stand-up choices). Phases 1 and 5 have no player decisions
-//! per the spec, so they never appear as a `Phase` variant a player is
-//! prompted in — they're folded directly into the event batch that
-//! ends the preceding decision (see `begin_turn_chain` /
-//! `end_of_turn_chain` below), exactly the "no no-op prompts" design
-//! decision from the plan. No survivor ability beyond its printed stat
-//! tabs is modeled yet (Unit 3), and no event-card effects are wired
-//! up (Unit 4) — `play_event` is not a legal action.
+//! Unit 2 landed the five-phase turn machine: `Phase::Draw` (Phase 2),
+//! `Phase::Actions` (Phase 3), and `Phase::ResolvingDecision`
+//! (hand-limit discard-down and Phase 4 hungry/stand-up choices).
+//! Phases 1 and 5 have no player decisions per the spec, so they never
+//! appear as a `Phase` variant a player is prompted in — they're
+//! folded directly into the event batch that ends the preceding
+//! decision (see `begin_turn_chain` / `end_of_turn_chain` below),
+//! exactly the "no no-op prompts" design decision from the plan.
+//!
+//! Unit 3 (this unit) wires up the active per-turn budget bonuses
+//! (`add_bonus` / `draw_bonus` / `action_bonus` — `crate::turns`) and
+//! the three special Phase-2 draw sources (Porter, Swimmer, Pirate).
+//! Pirate's steal needs the `Rng` port, which `apply_action` doesn't
+//! have, so it's a two-step dance: the action transitions to
+//! `Phase::AwaitingPirateSteal` (`Actor::Chance`), and `resolve_chance`
+//! picks the actual card. No event-card effects are wired up yet
+//! (Unit 4) — `play_event` is not a legal action.
 
 use playtest_core::{Actor, Game, GameError, GameResult, PlayerId};
 use playtest_ports::Rng;
@@ -26,8 +32,14 @@ use crate::card::{Card, CardInstanceId, CardKind};
 use crate::config::GreatGyreConfig;
 use crate::event::Event;
 use crate::public_view::{GreatGyrePublicView, public_view as build_public_view};
-use crate::state::{CurrentCard, Face, GameState, PendingDecision, PendingDecisionKind, Phase, PlacedCard};
-use crate::turns::{can_afford, compute_food, compute_hand_limit, extension_cost, find_in_hand, free_spaces, select_payment};
+use crate::state::{
+    CurrentCard, Face, GameState, PendingChance, PendingDecision, PendingDecisionKind, Phase,
+    PlacedCard,
+};
+use crate::turns::{
+    action_bonus, add_bonus, adjacent_players, can_afford, compute_food, compute_hand_limit,
+    draw_bonus, extension_cost, find_in_hand, free_spaces, has_survivor, select_payment,
+};
 
 /// Zero-sized game marker. Instances are cheap and stateless.
 #[derive(Debug, Default, Clone, Copy)]
@@ -60,7 +72,7 @@ impl Game for GreatGyreGame {
 
     fn next_actor(&self, state: &GameState) -> Actor {
         match state.phase {
-            Phase::AwaitingPostDraftShuffle => Actor::Chance,
+            Phase::AwaitingPostDraftShuffle | Phase::AwaitingPirateSteal => Actor::Chance,
             Phase::ResolvingDecision => {
                 // The pending-decision stack is always for a single
                 // player in Units 1-2 (no multi-player interruptions
@@ -83,7 +95,9 @@ impl Game for GreatGyreGame {
             Phase::Draw => legal_draw_actions(state, player),
             Phase::Actions => legal_action_phase_actions(state, player),
             Phase::ResolvingDecision => legal_decision_actions(state, player),
-            Phase::AwaitingPostDraftShuffle | Phase::Finished => Vec::new(),
+            Phase::AwaitingPostDraftShuffle | Phase::AwaitingPirateSteal | Phase::Finished => {
+                Vec::new()
+            }
         }
     }
 
@@ -98,7 +112,9 @@ impl Game for GreatGyreGame {
             Phase::Draw | Phase::Actions | Phase::ResolvingDecision => {
                 apply_turn_action(state, player, *action)
             }
-            Phase::AwaitingPostDraftShuffle | Phase::Finished => Err(GameError::IllegalAction {
+            Phase::AwaitingPostDraftShuffle
+            | Phase::AwaitingPirateSteal
+            | Phase::Finished => Err(GameError::IllegalAction {
                 player,
                 message: format!(
                     "action rejected: phase is {:?}, no actions accepted",
@@ -111,6 +127,7 @@ impl Game for GreatGyreGame {
     fn resolve_chance(&self, state: &GameState, rng: &mut dyn Rng) -> Result<Event, GameError> {
         match state.phase {
             Phase::AwaitingPostDraftShuffle => Ok(build_post_draft_setup_event(state, rng)),
+            Phase::AwaitingPirateSteal => resolve_pirate_steal(state, rng),
             _ => Err(GameError::ChanceFailed {
                 message: format!("no chance step pending in phase {:?}", state.phase),
             }),
@@ -261,6 +278,32 @@ fn fisher_yates<T>(slice: &mut [T], rng: &mut dyn Rng) {
     }
 }
 
+// ---------- chance: Pirate steal --------------------------------------------
+
+fn resolve_pirate_steal(state: &GameState, rng: &mut dyn Rng) -> Result<Event, GameError> {
+    let Some(PendingChance::PirateSteal { player, target }) = state.pending_chance else {
+        return Err(GameError::ChanceFailed {
+            message: "Phase::AwaitingPirateSteal with no PendingChance::PirateSteal set".into(),
+        });
+    };
+    let hand = &state.players[target as usize].hand;
+    let n = u64::try_from(hand.len()).map_err(|_| GameError::ChanceFailed {
+        message: "target hand too large for a u64 range".into(),
+    })?;
+    if n == 0 {
+        return Err(GameError::ChanceFailed {
+            message: format!("Pirate steal target {target} has an empty hand"),
+        });
+    }
+    let idx = rng.gen_range(0..n).map_err(|source| GameError::RngFailed { source })?;
+    let card = hand[usize::try_from(idx).expect("idx < n fits in usize")];
+    Ok(Event::PirateStole {
+        player,
+        target,
+        card,
+    })
+}
+
 // ---------- apply_event ----------------------------------------------------
 
 #[allow(clippy::too_many_lines, reason = "one exhaustive Event match; splitting it would scatter the fold logic across files for no readability gain, matching ShipWreck's rules.rs precedent")]
@@ -316,8 +359,8 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
             // Begin the very first turn: seat 0, Phase 2 (draw) next.
             state.current_player = 0;
             state.first_player = 0;
-            state.players[0].draws_remaining = 1;
-            state.players[0].actions_remaining = 1;
+            state.players[0].draws_remaining = 1 + draw_bonus(&state.players[0]);
+            state.players[0].actions_remaining = 1 + action_bonus(&state.players[0]);
             if let Some(card) = first_add {
                 state.players[0].current.push(crate::state::CurrentCard {
                     card: *card,
@@ -327,12 +370,15 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
             state.phase = Phase::Draw;
         }
 
-        // ---------- turn machine (Unit 2) ----------------------------
+        // ---------- turn machine (Units 2-3) --------------------------
         Event::TurnStarted { player } => {
             let idx = *player as usize;
             state.current_player = *player;
-            state.players[idx].draws_remaining = 1;
-            state.players[idx].actions_remaining = 1;
+            state.players[idx].draws_remaining = 1 + draw_bonus(&state.players[idx]);
+            state.players[idx].actions_remaining = 1 + action_bonus(&state.players[idx]);
+            state.players[idx].porter_used = false;
+            state.players[idx].swimmer_used = false;
+            state.players[idx].pirate_used = false;
             state.phase = Phase::Draw;
         }
         Event::FinalRoundTriggered => {
@@ -362,12 +408,68 @@ fn apply_event_impl(state: &mut GameState, event: &Event) {
             state.players[idx].draws_remaining =
                 state.players[idx].draws_remaining.saturating_sub(1);
         }
-        Event::DrawingFinished { player } => {
-            state.phase = Phase::Actions;
+        Event::DrewFromDiscardPile { player, card } => {
             let idx = *player as usize;
-            if state.players[idx].actions_remaining == 0 {
-                state.players[idx].actions_remaining = 1;
+            if let Some(pos) = state.discard_pile.iter().position(|c| c.id == card.id) {
+                state.discard_pile.remove(pos);
             }
+            state.players[idx].hand.push(*card);
+            state.players[idx].draws_remaining =
+                state.players[idx].draws_remaining.saturating_sub(1);
+            state.players[idx].porter_used = true;
+        }
+        Event::DrewFromAdjacentCurrent {
+            player,
+            neighbor,
+            card,
+        } => {
+            let n_idx = *neighbor as usize;
+            if let Some(pos) = state.players[n_idx]
+                .current
+                .iter()
+                .position(|c| c.card.id == card.id)
+            {
+                state.players[n_idx].current.remove(pos);
+            }
+            let idx = *player as usize;
+            state.players[idx].hand.push(*card);
+            state.players[idx].draws_remaining =
+                state.players[idx].draws_remaining.saturating_sub(1);
+            state.players[idx].swimmer_used = true;
+        }
+        Event::PirateStealInitiated { player, target } => {
+            state.pending_chance = Some(PendingChance::PirateSteal {
+                player: *player,
+                target: *target,
+            });
+            state.phase = Phase::AwaitingPirateSteal;
+        }
+        Event::PirateStole {
+            player,
+            target,
+            card,
+        } => {
+            let t_idx = *target as usize;
+            if let Some(pos) = state.players[t_idx]
+                .hand
+                .iter()
+                .position(|c| c.id == card.id)
+            {
+                state.players[t_idx].hand.remove(pos);
+            }
+            let idx = *player as usize;
+            state.players[idx].hand.push(*card);
+            state.players[idx].draws_remaining =
+                state.players[idx].draws_remaining.saturating_sub(1);
+            state.players[idx].pirate_used = true;
+            state.pending_chance = None;
+            state.phase = Phase::Draw;
+        }
+        Event::DrawingFinished { .. } => {
+            // `actions_remaining` was already set correctly (to
+            // `1 + action_bonus`) by this turn's `TurnStarted`; only
+            // the phase changes here.
+            state.phase = Phase::Actions;
         }
         Event::SurvivorPlayed { player, card } | Event::ModificationBuilt { player, card } => {
             let idx = *player as usize;
@@ -536,6 +638,33 @@ fn legal_draw_actions(state: &GameState, player: PlayerId) -> Vec<Action> {
                 .iter()
                 .map(|c| Action::DrawFromCurrent { card: c.card.id }),
         );
+
+        // Special substitute sources — each usable at most once per
+        // Phase 2 (`docs/greatgyre.md`'s `[A]` ruling).
+        if !p.porter_used
+            && has_survivor(p, crate::card::SurvivorId::Porter)
+            && !state.discard_pile.is_empty()
+        {
+            out.push(Action::DrawFromDiscardPile);
+        }
+        if !p.swimmer_used && has_survivor(p, crate::card::SurvivorId::Swimmer) {
+            for neighbor in adjacent_players(state.players.len(), player) {
+                out.extend(state.players[neighbor as usize].current.iter().map(|c| {
+                    Action::DrawFromAdjacentCurrent {
+                        neighbor,
+                        card: c.card.id,
+                    }
+                }));
+            }
+        }
+        if !p.pirate_used && has_survivor(p, crate::card::SurvivorId::Pirate) {
+            out.extend(
+                (0..state.players.len())
+                    .map(|i| u8::try_from(i).expect("seat fits in u8"))
+                    .filter(|&target| target != player && !state.players[target as usize].hand.is_empty())
+                    .map(|target| Action::DrawRandomFromHand { target }),
+            );
+        }
     }
     out.push(Action::FinishDrawing);
     out
@@ -628,6 +757,13 @@ fn apply_turn_action(
 ) -> Result<Vec<Event>, GameError> {
     match (state.phase, action) {
         (Phase::Draw, Action::DrawFromCurrent { card }) => apply_draw_from_current(state, player, card),
+        (Phase::Draw, Action::DrawFromDiscardPile) => apply_draw_from_discard_pile(state, player),
+        (Phase::Draw, Action::DrawFromAdjacentCurrent { neighbor, card }) => {
+            apply_draw_from_adjacent_current(state, player, neighbor, card)
+        }
+        (Phase::Draw, Action::DrawRandomFromHand { target }) => {
+            apply_draw_random_from_hand(state, player, target)
+        }
         (Phase::Draw, Action::FinishDrawing) => {
             if state.current_player != player {
                 return Err(not_your_turn(player, state.current_player));
@@ -699,6 +835,159 @@ fn finish_drawing_chain(work: &mut GameState, player: PlayerId) -> Vec<Event> {
     let ev = Event::DrawingFinished { player };
     apply_event_impl(work, &ev);
     vec![ev]
+}
+
+fn apply_draw_from_discard_pile(state: &GameState, player: PlayerId) -> Result<Vec<Event>, GameError> {
+    if state.current_player != player {
+        return Err(not_your_turn(player, state.current_player));
+    }
+    let p = &state.players[player as usize];
+    if p.draws_remaining == 0 {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no draws remaining this turn".into(),
+        });
+    }
+    if p.porter_used {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "Porter's draw-from-Discard-Pile has already been used this Phase 2".into(),
+        });
+    }
+    if !has_survivor(p, crate::card::SurvivorId::Porter) {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no Porter on this player's raft".into(),
+        });
+    }
+    let Some(card) = state.discard_pile.last().copied() else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "the Discard Pile is empty".into(),
+        });
+    };
+    let mut work = state.clone();
+    let mut events = vec![Event::DrewFromDiscardPile { player, card }];
+    apply_event_impl(&mut work, &events[0]);
+    if work.players[player as usize].draws_remaining == 0 {
+        events.extend(finish_drawing_chain(&mut work, player));
+    }
+    Ok(events)
+}
+
+fn apply_draw_from_adjacent_current(
+    state: &GameState,
+    player: PlayerId,
+    neighbor: PlayerId,
+    card_id: CardInstanceId,
+) -> Result<Vec<Event>, GameError> {
+    if state.current_player != player {
+        return Err(not_your_turn(player, state.current_player));
+    }
+    let p = &state.players[player as usize];
+    if p.draws_remaining == 0 {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no draws remaining this turn".into(),
+        });
+    }
+    if p.swimmer_used {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "Swimmer's draw-from-adjacent-Current has already been used this Phase 2".into(),
+        });
+    }
+    if !has_survivor(p, crate::card::SurvivorId::Swimmer) {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no Swimmer on this player's raft".into(),
+        });
+    }
+    if !adjacent_players(state.players.len(), player).contains(&neighbor) {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("seat {neighbor} is not adjacent to {player}"),
+        });
+    }
+    let Some(entry) = state.players[neighbor as usize]
+        .current
+        .iter()
+        .find(|c| c.card.id == card_id)
+    else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("card {card_id:?} is not in seat {neighbor}'s Current"),
+        });
+    };
+    let card = entry.card;
+    let mut work = state.clone();
+    let mut events = vec![Event::DrewFromAdjacentCurrent {
+        player,
+        neighbor,
+        card,
+    }];
+    apply_event_impl(&mut work, &events[0]);
+    if work.players[player as usize].draws_remaining == 0 {
+        events.extend(finish_drawing_chain(&mut work, player));
+    }
+    Ok(events)
+}
+
+/// Initiate a Pirate steal. Unlike the other special draw sources this
+/// doesn't move a card itself — it transitions to
+/// `Phase::AwaitingPirateSteal` so `resolve_chance` can pick the
+/// actual card via the `Rng` port, which `apply_action` doesn't have
+/// access to. `draws_remaining` / `pirate_used` update when the steal
+/// actually resolves (`Event::PirateStole`), not here.
+fn apply_draw_random_from_hand(
+    state: &GameState,
+    player: PlayerId,
+    target: PlayerId,
+) -> Result<Vec<Event>, GameError> {
+    if state.current_player != player {
+        return Err(not_your_turn(player, state.current_player));
+    }
+    let p = &state.players[player as usize];
+    if p.draws_remaining == 0 {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no draws remaining this turn".into(),
+        });
+    }
+    if p.pirate_used {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "Pirate's random-steal has already been used this Phase 2".into(),
+        });
+    }
+    if !has_survivor(p, crate::card::SurvivorId::Pirate) {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "no Pirate on this player's raft".into(),
+        });
+    }
+    if target == player {
+        return Err(GameError::IllegalAction {
+            player,
+            message: "Pirate cannot steal from yourself".into(),
+        });
+    }
+    let Some(target_state) = state.players.get(target as usize) else {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("unknown target seat {target}"),
+        });
+    };
+    if target_state.hand.is_empty() {
+        return Err(GameError::IllegalAction {
+            player,
+            message: format!("seat {target} has an empty hand"),
+        });
+    }
+    let mut work = state.clone();
+    let ev = Event::PirateStealInitiated { player, target };
+    apply_event_impl(&mut work, &ev);
+    Ok(vec![ev])
 }
 
 fn apply_play_survivor(
@@ -1126,7 +1415,14 @@ fn begin_turn_chain(work: &mut GameState, player: PlayerId) -> Vec<Event> {
     let mut events = vec![Event::TurnStarted { player }];
     apply_event_impl(work, &events[0]);
 
-    if let Some((card, triggers_final_round)) = peek_next_add_card(work) {
+    // `1 + add_bonus` cards (Sail +1 each, Millionaire +1). Raft
+    // composition can't change mid-add (Phase 1 only touches the
+    // Current pile), so it's safe to compute the count once.
+    let add_count = 1 + add_bonus(&work.players[player as usize]);
+    for _ in 0..add_count {
+        let Some((card, triggers_final_round)) = peek_next_add_card(work) else {
+            break; // Both decks exhausted — nothing left to add.
+        };
         if triggers_final_round {
             let ev = Event::FinalRoundTriggered;
             apply_event_impl(work, &ev);

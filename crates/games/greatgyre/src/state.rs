@@ -83,6 +83,18 @@ pub struct PendingDecision {
     pub kind: PendingDecisionKind,
 }
 
+/// A one-off chance step in progress, mirroring `pending_decisions`'
+/// stack pattern but for the (rarer) case where the *engine*, not the
+/// player, needs to resolve something via the `Rng` port. Currently
+/// only Pirate's random hand-steal; `Phase::AwaitingPirateSteal` is
+/// the corresponding phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingChance {
+    /// `player`'s Pirate draws a uniformly-random card from `target`'s hand.
+    PirateSteal { player: PlayerId, target: PlayerId },
+}
+
 /// High-level state of the Great Gyre turn machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,6 +107,9 @@ pub enum Phase {
     AwaitingPostDraftShuffle,
     /// Phase 2: the active player may draw from their own Current.
     Draw,
+    /// A Pirate steal was initiated; the actual card is picked by
+    /// `resolve_chance` (see `GameState::pending_chance`).
+    AwaitingPirateSteal,
     /// Phase 3: the active player may take actions.
     Actions,
     /// A pending decision (discard-down or Phase-4 hungry/stand-up) is
@@ -117,13 +132,26 @@ pub struct PlayerState {
     pub built_extensions: Vec<Card>,
     /// Survivors + modifications placed face-up on this raft.
     pub placed: Vec<PlacedCard>,
-    /// Draws left this Phase 2 (reset to 1 at the start of every turn
-    /// — Unit 3 will source the `1 + draw_bonus` formula from raft
-    /// stats).
+    /// Draws left this Phase 2. Reset at the start of every turn to
+    /// `1 + draw_bonus` (Net +1 each, Athlete +1) —
+    /// `crate::turns::draw_bonus`.
     pub draws_remaining: u8,
-    /// Actions left this Phase 3 (reset to 1 at the start of every
-    /// turn — Unit 3 will source `1 + action_bonus`).
+    /// Actions left this Phase 3. Reset at the start of every turn to
+    /// `1 + action_bonus` (Toolkit +1, First Mate +1) —
+    /// `crate::turns::action_bonus`.
     pub actions_remaining: u8,
+    /// Whether this player has already used Porter's "draw from
+    /// Discard Pile" substitute source this Phase 2. Reset at
+    /// `TurnStarted`.
+    pub porter_used: bool,
+    /// Whether this player has already used Swimmer's "draw from an
+    /// adjacent Current" substitute source this Phase 2. Reset at
+    /// `TurnStarted`.
+    pub swimmer_used: bool,
+    /// Whether this player has already used Pirate's "draw a random
+    /// card from another hand" substitute source this Phase 2. Reset
+    /// at `TurnStarted`.
+    pub pirate_used: bool,
 }
 
 impl PlayerState {
@@ -138,6 +166,9 @@ impl PlayerState {
             placed: Vec::new(),
             draws_remaining: 0,
             actions_remaining: 0,
+            porter_used: false,
+            swimmer_used: false,
+            pirate_used: false,
         }
     }
 }
@@ -193,6 +224,10 @@ pub struct GameState {
     /// ShipWreck's `event_resolution_stack` so Unit 4's event
     /// resolutions can reuse it.
     pub pending_decisions: Vec<PendingDecision>,
+    /// The one-off chance step in progress, if `phase` is one of the
+    /// `Awaiting*` variants that needs the `Rng` port. `None`
+    /// otherwise.
+    pub pending_chance: Option<PendingChance>,
 }
 
 impl GameState {

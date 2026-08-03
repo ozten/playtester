@@ -1,15 +1,14 @@
 //! Stat aggregation and small helpers shared by `rules.rs`.
 //!
-//! Unit 2 scope: only *printed* per-card numbers (hope, food, hand-tab,
-//! space rules, resource cost) are aggregated here — never an *active*
-//! ability (extra actions/draws/adds, alternate draw sources,
-//! reactions). Those land in Unit 3. This split is why
-//! `compute_hand_limit` and `compute_food` are fully implemented (the
-//! spec states their formulas as plain per-card numbers) while the
-//! Phase 1/2/3 budgets stay fixed at `1` regardless of which
-//! survivors/modifications are on the raft.
+//! Unit 2 landed the *printed* per-card numbers (hope, food, hand-tab,
+//! space rules, resource cost). Unit 3 (this unit) adds the *active*
+//! per-turn budget bonuses — `add_bonus` / `draw_bonus` / `action_bonus`
+//! — and the special Phase-2 draw sources' eligibility checks
+//! (`has_survivor`, `adjacent_players`).
 
-use crate::card::{Card, CardInstanceId, CardKind, ModificationKind};
+use playtest_core::PlayerId;
+
+use crate::card::{Card, CardInstanceId, CardKind, ModificationKind, SurvivorId};
 use crate::resource::{Resource, ResourceCost};
 use crate::state::PlayerState;
 
@@ -133,4 +132,141 @@ pub fn select_payment(hand: &[Card], cost: ResourceCost) -> Vec<Card> {
 #[must_use]
 pub fn find_in_hand(hand: &[Card], id: CardInstanceId) -> Option<Card> {
     hand.iter().copied().find(|c| c.id == id)
+}
+
+/// True if `player` has `survivor` placed on their raft (hungry or
+/// standing — per the spec's `[A]` ruling that Hungry survivors'
+/// stats still count, extended here to abilities as well: nothing in
+/// the spec says going Hungry switches an ability off, and the
+/// alternative — silently losing your draw source mid-game — would be
+/// a harsher, unstated penalty).
+#[must_use]
+pub fn has_survivor(player: &PlayerState, survivor: SurvivorId) -> bool {
+    player
+        .placed
+        .iter()
+        .any(|pc| matches!(pc.card.kind, CardKind::Survivor(s) if s == survivor))
+}
+
+fn count_modification(player: &PlayerState, kind: ModificationKind) -> u8 {
+    let n = player
+        .placed
+        .iter()
+        .filter(|pc| matches!(pc.card.kind, CardKind::Modification(k) if k == kind))
+        .count();
+    u8::try_from(n).unwrap_or(u8::MAX)
+}
+
+/// `add_bonus`: Sail +1 each (built), Millionaire +1 (placed). Added
+/// to the base `1` for Phase 1's card-add count.
+#[must_use]
+pub fn add_bonus(player: &PlayerState) -> u8 {
+    count_modification(player, ModificationKind::Sail)
+        .saturating_add(u8::from(has_survivor(player, SurvivorId::Millionaire)))
+}
+
+/// `draw_bonus`: Net +1 each (built), Athlete +1 (placed). Added to
+/// the base `1` for Phase 2's draw budget.
+#[must_use]
+pub fn draw_bonus(player: &PlayerState) -> u8 {
+    count_modification(player, ModificationKind::Net)
+        .saturating_add(u8::from(has_survivor(player, SurvivorId::Athlete)))
+}
+
+/// `action_bonus`: Toolkit +1 (built, single copy in the game), First
+/// Mate +1 (placed). Added to the base `1` for Phase 3's action
+/// budget. Work Day's "unlimited actions" (Unit 4) layers on top of
+/// this rather than folding into it.
+#[must_use]
+pub fn action_bonus(player: &PlayerState) -> u8 {
+    count_modification(player, ModificationKind::Toolkit)
+        .saturating_add(u8::from(has_survivor(player, SurvivorId::FirstMate)))
+}
+
+/// The (deduplicated) seat(s) adjacent to `player` in a `num_players`-
+/// seat game: left and right neighbors. For `num_players == 2` these
+/// coincide (there's only one opponent), so the result has length 1;
+/// otherwise length 2.
+#[must_use]
+pub fn adjacent_players(num_players: usize, player: PlayerId) -> Vec<PlayerId> {
+    let n = num_players;
+    let me = usize::from(player);
+    let left = u8::try_from((me + n - 1) % n).expect("seat fits in u8");
+    let right = u8::try_from((me + 1) % n).expect("seat fits in u8");
+    if left == right {
+        vec![left]
+    } else {
+        vec![left, right]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::{Card, CardInstanceId};
+    use crate::state::PlacedCard;
+
+    fn placed(id: u32, kind: CardKind) -> PlacedCard {
+        PlacedCard {
+            card: Card::new(CardInstanceId(id), kind),
+            hungry: false,
+        }
+    }
+
+    fn fresh_player() -> PlayerState {
+        let raft = Card::new(CardInstanceId(9000), CardKind::RaftLeft);
+        PlayerState::fresh(raft, raft)
+    }
+
+    #[test]
+    fn add_bonus_counts_sails_and_millionaire() {
+        let mut p = fresh_player();
+        assert_eq!(add_bonus(&p), 0);
+        p.placed.push(placed(1, CardKind::Modification(ModificationKind::Sail)));
+        assert_eq!(add_bonus(&p), 1);
+        p.placed.push(placed(2, CardKind::Modification(ModificationKind::Sail)));
+        assert_eq!(add_bonus(&p), 2);
+        p.placed.push(placed(3, CardKind::Survivor(SurvivorId::Millionaire)));
+        assert_eq!(add_bonus(&p), 3);
+    }
+
+    #[test]
+    fn draw_bonus_counts_nets_and_athlete() {
+        let mut p = fresh_player();
+        p.placed.push(placed(1, CardKind::Modification(ModificationKind::Net)));
+        p.placed.push(placed(2, CardKind::Modification(ModificationKind::Net)));
+        p.placed.push(placed(3, CardKind::Survivor(SurvivorId::Athlete)));
+        assert_eq!(draw_bonus(&p), 3);
+    }
+
+    #[test]
+    fn action_bonus_counts_toolkit_and_first_mate() {
+        let mut p = fresh_player();
+        p.placed.push(placed(1, CardKind::Modification(ModificationKind::Toolkit)));
+        p.placed.push(placed(2, CardKind::Survivor(SurvivorId::FirstMate)));
+        assert_eq!(action_bonus(&p), 2);
+    }
+
+    #[test]
+    fn hungry_survivors_still_grant_abilities() {
+        let mut p = fresh_player();
+        p.placed.push(PlacedCard {
+            card: Card::new(CardInstanceId(1), CardKind::Survivor(SurvivorId::Athlete)),
+            hungry: true,
+        });
+        assert!(has_survivor(&p, SurvivorId::Athlete));
+        assert_eq!(draw_bonus(&p), 1);
+    }
+
+    #[test]
+    fn adjacent_players_dedupes_for_two() {
+        assert_eq!(adjacent_players(2, 0), vec![1]);
+        assert_eq!(adjacent_players(2, 1), vec![0]);
+    }
+
+    #[test]
+    fn adjacent_players_distinct_for_three_or_more() {
+        assert_eq!(adjacent_players(3, 0), vec![2, 1]);
+        assert_eq!(adjacent_players(4, 1), vec![0, 2]);
+    }
 }

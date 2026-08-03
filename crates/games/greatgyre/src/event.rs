@@ -61,6 +61,29 @@ pub enum Event {
 
     /// Phase 2: `player` drew `card` from their own Current into hand.
     CardDrawnFromCurrent { player: PlayerId, card: Card },
+    /// Phase 2, Porter: `player` drew `card` from the top of the
+    /// shared Discard Pile instead of a normal draw.
+    DrewFromDiscardPile { player: PlayerId, card: Card },
+    /// Phase 2, Swimmer: `player` drew `card` from `neighbor`'s
+    /// Current instead of a normal draw.
+    DrewFromAdjacentCurrent {
+        player: PlayerId,
+        neighbor: PlayerId,
+        card: Card,
+    },
+    /// Phase 2, Pirate: `player` initiated a random steal from
+    /// `target`'s hand. The actual card is picked by the following
+    /// chance step (`Event::PirateStole`) — this event only records
+    /// the choice of target and transitions to
+    /// `Phase::AwaitingPirateSteal`.
+    PirateStealInitiated { player: PlayerId, target: PlayerId },
+    /// Chance: the uniformly-random card `player`'s Pirate stole from
+    /// `target`'s hand.
+    PirateStole {
+        player: PlayerId,
+        target: PlayerId,
+        card: Card,
+    },
     /// Phase 2 ends (budget exhausted or `finish_drawing`).
     DrawingFinished { player: PlayerId },
 

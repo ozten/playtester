@@ -15,10 +15,12 @@
 //! unit breakdown.
 //!
 //! Unit 1 shipped the crate skeleton, card catalog, state shape, and
-//! the setup/survivor-draft flow. Unit 2 (this unit) lands the
-//! five-phase turn machine (`Game` trait impl), sans survivor
-//! abilities beyond their printed stat tabs and sans event-card
-//! effects — both land in later units.
+//! the setup/survivor-draft flow. Unit 2 landed the five-phase turn
+//! machine (`Game` trait impl), sans survivor abilities beyond their
+//! printed stat tabs and sans event-card effects. Unit 3 (this unit)
+//! wires up the active per-turn budget bonuses (add/draw/action) and
+//! the three special Phase-2 draw sources (Porter, Swimmer, Pirate).
+//! Event-card effects remain out of scope until Unit 4.
 
 pub mod action;
 pub mod card;
@@ -47,6 +49,6 @@ pub use public_view::{GreatGyrePublicView, public_view};
 pub use resource::{Resource, ResourceCost};
 pub use rules::GreatGyreGame;
 pub use state::{
-    CurrentCard, Face, GameState, PendingDecision, PendingDecisionKind, Phase, PlacedCard,
-    PlayerState,
+    CurrentCard, Face, GameState, PendingChance, PendingDecision, PendingDecisionKind, Phase,
+    PlacedCard, PlayerState,
 };

@@ -60,5 +60,6 @@ pub fn initial_state(cfg: &GreatGyreConfig) -> GameState {
         first_player: 0,
         final_round: false,
         pending_decisions: Vec::new(),
+        pending_chance: None,
     }
 }
