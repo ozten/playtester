@@ -62,7 +62,7 @@ Design decisions already made (do not relitigate):
 - [x] **U4 — events & reactions.** Event deck + play-event action +
   targeting legality, Shark/Octopus/Walrus (+removal action)/Love Boat/
   Storm/Work Day/Land Sighting, Dead Fish + Fisher reaction windows,
-  Telescope activation. Soak again with events on. Commit: `<pending>`.
+  Telescope activation. Soak again with events on. Commit: `2a6a602`.
 - [ ] **U5 — views, registry, agents, CLI.** `PublicView` redaction per
   spec + property test (view never contains hidden identities),
   registry integration (`greatgyre` game + `greedy-greatgyre` /
